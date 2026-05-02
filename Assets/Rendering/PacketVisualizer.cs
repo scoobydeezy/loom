@@ -12,9 +12,6 @@ public class PacketVisualizer : MonoBehaviour
     EntityManager entityManager;
     EntityQuery packetQuery;
 
-    Vector3 start = new Vector3(-5, 0, 0);
-    Vector3 end = new Vector3(5, 0, 0);
-
     void Start()
     {
         entityManager = World.DefaultGameObjectInjectionWorld.EntityManager;
@@ -33,9 +30,13 @@ public class PacketVisualizer : MonoBehaviour
             }
 
             var packet = entityManager.GetComponentData<Packet>(entity);
+            var edge = entityManager.GetComponentData<Edge>(packet.CurrentEdge);
 
-            float t = packet.Progress / 10f; // edge length
-            Vector3 pos = Vector3.Lerp(start, end, t);
+            var fromPos = entityManager.GetComponentData<NodeTransform>(edge.FromNode).Position;
+            var toPos = entityManager.GetComponentData<NodeTransform>(edge.ToNode).Position;
+
+            float t = packet.Progress / edge.Length;
+            Vector3 pos = Vector3.Lerp(fromPos, toPos, t);
 
             visuals[entity].transform.position = pos;
         }
