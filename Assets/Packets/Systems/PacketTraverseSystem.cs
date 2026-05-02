@@ -9,80 +9,141 @@ public partial struct PacketTraverseSystem : ISystem
         float dt = SystemAPI.Time.DeltaTime;
         var em = state.EntityManager;
 
-        var edgeLookup = SystemAPI.GetComponentLookup<Edge>(true);
-        var nodeLookup = SystemAPI.GetComponentLookup<Node>(true);
-        var internalTagLookup = SystemAPI.GetComponentLookup<InternalEdgeTag>(true);
+        var layoutLookup       = SystemAPI.GetComponentLookup<NodeLayout>(true);
+        var internalEdgeLookup = SystemAPI.GetComponentLookup<InternalEdge>(true);
+        var nodeLaneLookup     = SystemAPI.GetBufferLookup<NodeLane>(true);
 
         foreach (var (packet, entity) in SystemAPI
                  .Query<RefRW<Packet>>()
                  .WithEntityAccess())
         {
-            var p = packet.ValueRW;
+            var p    = packet.ValueRW;
             var edge = em.GetComponentData<Edge>(p.CurrentEdge);
 
             p.Progress += p.Speed * dt;
 
-            if (p.Progress >= edge.Length)
+            if (p.Progress < edge.Length)
             {
-                bool isInternal = internalTagLookup.HasComponent(p.CurrentEdge);
+                packet.ValueRW = p;
+                continue;
+            }
 
-                // Release occupancy from current edge
-                edge.Occupancy--;
-                em.SetComponentData(p.CurrentEdge, edge);
+            // Release occupancy from the finished edge
+            edge.Occupancy--;
+            em.SetComponentData(p.CurrentEdge, edge);
 
-                if (!isInternal)
+            bool isInternal = internalEdgeLookup.HasComponent(p.CurrentEdge);
+
+            if (!isInternal)
+            {
+                // Finished external edge → enter destination node's entry queue
+                var layout   = layoutLookup[edge.ToNode];
+                var entryData = em.GetComponentData<Edge>(layout.EntryEdge);
+
+                if (entryData.Occupancy < entryData.Capacity)
                 {
-                    // --- Finished EXTERNAL edge → go to node's internal edge ---
-
-                    // Determine which node we arrived at
-                    Entity arrivedNode = edge.ToNode;
-
-                    var node = nodeLookup[arrivedNode];
-                    Entity internalEdge = node.InternalEdge;
-
-                    var nextEdge = em.GetComponentData<Edge>(internalEdge);
-
-                    if (nextEdge.Occupancy < nextEdge.Capacity)
-                    {
-                        nextEdge.Occupancy++;
-                        em.SetComponentData(internalEdge, nextEdge);
-
-                        p.CurrentEdge = internalEdge;
-                        p.Progress = 0f;
-                    }
-                    else
-                    {
-                        // Internal lane full — wait at end of external edge
-                        p.Progress = edge.Length;
-                        edge.Occupancy++;
-                        em.SetComponentData(p.CurrentEdge, edge);
-                    }
+                    entryData.Occupancy++;
+                    em.SetComponentData(layout.EntryEdge, entryData);
+                    p.CurrentEdge = layout.EntryEdge;
+                    p.Progress    = 0f;
                 }
                 else
                 {
-                    // --- Finished INTERNAL edge → go to next external edge in route ---
+                    // Entry queue full — hold at end of external edge
+                    edge.Occupancy++;
+                    em.SetComponentData(p.CurrentEdge, edge);
+                    p.Progress = edge.Length;
+                }
+            }
+            else
+            {
+                var internalData = internalEdgeLookup[p.CurrentEdge];
+                Entity ownerNode = edge.ToNode;
 
-                    var path = em.GetBuffer<PacketRoute>(entity);
-                    int nextIndex = (p.PathIndex + 1) % path.Length;
-                    Entity nextEdgeEntity = path[nextIndex].Edge;
-
-                    var nextEdge = em.GetComponentData<Edge>(nextEdgeEntity);
-
-                    if (nextEdge.Occupancy < nextEdge.Capacity)
+                switch (internalData.Role)
+                {
+                    case InternalEdgeRole.Entry:
                     {
-                        nextEdge.Occupancy++;
-                        em.SetComponentData(nextEdgeEntity, nextEdge);
+                        // Pick the least-occupied lane that still has capacity
+                        var lanes    = nodeLaneLookup[ownerNode];
+                        Entity best  = Entity.Null;
+                        int minOcc   = int.MaxValue;
 
-                        p.CurrentEdge = nextEdgeEntity;
-                        p.PathIndex = nextIndex;
-                        p.Progress = 0f;
+                        for (int i = 0; i < lanes.Length; i++)
+                        {
+                            var ld = em.GetComponentData<Edge>(lanes[i].Edge);
+                            if (ld.Occupancy < ld.Capacity && ld.Occupancy < minOcc)
+                            {
+                                minOcc = ld.Occupancy;
+                                best   = lanes[i].Edge;
+                            }
+                        }
+
+                        if (best != Entity.Null)
+                        {
+                            var ld = em.GetComponentData<Edge>(best);
+                            ld.Occupancy++;
+                            em.SetComponentData(best, ld);
+                            p.CurrentEdge = best;
+                            p.Progress    = 0f;
+                        }
+                        else
+                        {
+                            // All workers busy — hold at end of entry edge
+                            edge.Occupancy++;
+                            em.SetComponentData(p.CurrentEdge, edge);
+                            p.Progress = edge.Length;
+                        }
+                        break;
                     }
-                    else
+
+                    case InternalEdgeRole.Lane:
                     {
-                        // Next edge full — wait at end of internal edge
-                        p.Progress = edge.Length;
-                        edge.Occupancy++;
-                        em.SetComponentData(p.CurrentEdge, edge);
+                        // Finished processing → enter exit staging edge
+                        var layout   = layoutLookup[ownerNode];
+                        var exitData = em.GetComponentData<Edge>(layout.ExitEdge);
+
+                        if (exitData.Occupancy < exitData.Capacity)
+                        {
+                            exitData.Occupancy++;
+                            em.SetComponentData(layout.ExitEdge, exitData);
+                            p.CurrentEdge = layout.ExitEdge;
+                            p.Progress    = 0f;
+                        }
+                        else
+                        {
+                            // Exit full — hold at end of lane
+                            edge.Occupancy++;
+                            em.SetComponentData(p.CurrentEdge, edge);
+                            p.Progress = edge.Length;
+                        }
+                        break;
+                    }
+
+                    case InternalEdgeRole.Exit:
+                    {
+                        // Finished exit staging → advance to next external edge in route
+                        var path      = em.GetBuffer<PacketRoute>(entity);
+                        int nextIndex = (p.PathIndex + 1) % path.Length;
+                        Entity next   = path[nextIndex].Edge;
+                        var nextEdge  = em.GetComponentData<Edge>(next);
+
+                        if (nextEdge.Occupancy < nextEdge.Capacity)
+                        {
+                            nextEdge.Occupancy++;
+                            em.SetComponentData(next, nextEdge);
+                            p.CurrentEdge = next;
+                            p.PathIndex   = nextIndex;
+                            p.Progress    = 0f;
+                        }
+                        else
+                        {
+                            // External edge full — hold at end of exit edge
+                            edge.Occupancy++;
+                            em.SetComponentData(p.CurrentEdge, edge);
+                            p.Progress = edge.Length;
+                        }
+                        break;
                     }
                 }
             }

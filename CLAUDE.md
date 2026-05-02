@@ -112,11 +112,12 @@ This project uses Unity's Entity Component System. Always adhere to ECS idioms:
 Components are named after the concept they represent — not suffixed with `Data`. The component **is** the thing, not a description of it. `Node.cs` is the Node. `Packet.cs` is the Packet. This reinforces that simulation entities are defined entirely by their components, and that no "real" counterpart exists elsewhere.
 
 ```
-Components:  Node, NodeTransform, Edge, Packet, PacketProgress, PacketRouteIndex, QueueState, EdgeCapacity
-Buffers:     PacketRoute, NodeQueue
-Tags:        PacketInTransitTag, NodeActiveTag, EdgeSaturatedTag
-Systems:     PacketTraverseSystem, NodeDispatchSystem, EdgeCapacitySystem, RoutingSystem
-Aspects:     PacketAspect, NodeAspect (when grouping related component access)
+Components:       Node, NodeTransform, NodeType, Edge, Packet, PacketProgress, PacketRouteIndex, QueueState, EdgeCapacity
+Buffers:          PacketRoute, NodeQueue
+Tags:             PacketInTransitTag, NodeActiveTag, EdgeSaturatedTag
+Systems:          PacketTraverseSystem, NodeDispatchSystem, EdgeCapacitySystem, RoutingSystem
+Aspects:          PacketAspect, NodeAspect (when grouping related component access)
+ScriptableObjects: NodeTypeDefinition (configuration recipes — never enter ECS world directly)
 ```
 
 ---
@@ -272,11 +273,18 @@ Assets/
     ├── Nodes/
     │   ├── Components/
     │   │   ├── Node.cs
-    │   │   └── NodeTransform.cs
+    │   │   ├── NodeTransform.cs
+    │   │   └── NodeType.cs
     │   ├── Buffers/
     │   │   └── NodeQueue.cs              # (soon)
-    │   └── Systems/
-    │       └── NodeDispatchSystem.cs     # (soon)
+    │   ├── Systems/
+    │   │   └── NodeDispatchSystem.cs     # (soon)
+    │   └── NodeTypes/                    # ScriptableObject assets (configuration only)
+    │       ├── NodeTypeDefinition.cs     # ScriptableObject class definition
+    │       ├── WebServer.asset
+    │       ├── Database.asset
+    │       ├── LoadBalancer.asset
+    │       └── Cache.asset
     ├── Edges/
     │   ├── Components/
     │   │   └── Edge.cs
@@ -288,6 +296,42 @@ Assets/
 ```
 
 **Rules for new domains:** If a concept needs more than one component or its own system, it gets a domain folder. Shared utilities that serve multiple domains live in a top-level `Loom/Shared/` folder.
+
+---
+
+## Node Type System
+
+Node configuration is data-driven via **ScriptableObjects**. A `NodeTypeDefinition` asset defines the properties of a class of node. When a node is spawned, `LoomBootstrap` reads the assigned definition and uses its values to compose ECS components and build the node's internal topology. The ScriptableObject itself never enters the ECS world.
+
+### Why ScriptableObjects
+
+- Native to Unity's asset pipeline — no custom parsing
+- Appear in the editor as inspectable, drag-and-drop assets
+- Live in the project like prefabs; no scene or GameObject required
+- Decouples configuration from code — new node types require no new C#
+
+### NodeTypeDefinition Properties
+
+| Property             | Type   | Meaning                                                                 |
+| -------------------- | ------ | ----------------------------------------------------------------------- |
+| `typeName`           | string | Display label                                                           |
+| `laneCount`          | int    | Worker concurrency — how many packets the node processes simultaneously |
+| `queueCapacity`      | int    | Max packets waiting at the entry edge before backpressure               |
+| `internalPathLength` | float  | Distance packets travel inside the node — determines compute time       |
+| `exitCapacity`       | int    | Capacity of the exit edge                                               |
+
+### Built-in Node Types
+
+| Type             | laneCount | queueCapacity | internalPathLength | Notes                                               |
+| ---------------- | --------- | ------------- | ------------------ | --------------------------------------------------- |
+| **WebServer**    | 16        | 128           | medium             | Many workers, moderate compute                      |
+| **Database**     | 4         | 20            | long               | Few connections, expensive queries — saturates fast |
+| **LoadBalancer** | 64        | 256           | near-zero          | High concurrency, near-invisible latency            |
+| **Cache**        | 1         | 32            | near-zero          | Single-threaded, near-instant response              |
+
+### Lane Count as a First-Class Property
+
+Lane count represents **worker concurrency** — the number of things a node can do simultaneously. It is the single most important property distinguishing node types. A database with 4 lanes behaves fundamentally differently from a web server with 16. Never hard-code lane count; always derive it from the `NodeTypeDefinition`.
 
 ---
 
