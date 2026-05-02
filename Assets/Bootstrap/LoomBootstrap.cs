@@ -15,54 +15,31 @@ public class LoomBootstrap : MonoBehaviour
             typeof(NodeEdges),
             typeof(NodeTransform)
         );
+
         var edgeArch = em.CreateArchetype(typeof(Edge));
+        var internalEdgeArch = em.CreateArchetype(typeof(Edge), typeof(InternalEdgeTag));
         var packetArch = em.CreateArchetype(typeof(Packet));
 
-        // Create nodes A, B, C
-        Entity A = em.CreateEntity(nodeArch);
-        Entity B = em.CreateEntity(nodeArch);
-        Entity C = em.CreateEntity(nodeArch);
+        // --- Create Nodes ---
+        Entity A = CreateNode(em, nodeArch, internalEdgeArch, new float3(-5, 0, 0));
+        Entity B = CreateNode(em, nodeArch, internalEdgeArch, new float3(5, 0, 0));
+        Entity C = CreateNode(em, nodeArch, internalEdgeArch, new float3(0, 0, 6));
 
-        // Create edges AB, BC, CA
-        Entity AB = em.CreateEntity(edgeArch);
-        Entity BC = em.CreateEntity(edgeArch);
-        Entity CA = em.CreateEntity(edgeArch);
+        // --- Create External Edges ---
+        Entity AB = CreateEdge(em, edgeArch, A, B, 10f, 50);
+        Entity BC = CreateEdge(em, edgeArch, B, C, 10f, 15);
+        Entity CA = CreateEdge(em, edgeArch, C, A, 10f, 50);
 
-        em.SetComponentData(AB, new Edge {
-            FromNode = A,
-            ToNode = B,
-            Length = 10f,
-            Capacity = 50,
-            Occupancy = 0
-        });
-        em.SetComponentData(BC, new Edge {
-            FromNode = B,
-            ToNode = C,
-            Length = 10f,
-            Capacity = 15,
-            Occupancy = 0
-        });
-        em.SetComponentData(CA, new Edge {
-            FromNode = C,
-            ToNode = A,
-            Length = 10f,
-            Capacity = 50,
-            Occupancy = 0
-        });
-
-        // Tell nodes which edges they have
+        // --- Tell nodes which edges they connect to ---
         em.SetComponentData(A, new NodeEdges { EdgeA = AB, EdgeB = CA });
         em.SetComponentData(B, new NodeEdges { EdgeA = AB, EdgeB = BC });
         em.SetComponentData(C, new NodeEdges { EdgeA = BC, EdgeB = CA });
 
-        em.SetComponentData(A, new NodeTransform { Position = new float3(-5, 0, 0) });
-        em.SetComponentData(B, new NodeTransform { Position = new float3(5, 0, 0) });
-        em.SetComponentData(C, new NodeTransform { Position = new float3(0, 0, 6) });
-
-        // Spawn packets starting on AB going to B
+        // --- Spawn Packets ---
         for (int i = 0; i < packetCount; i++)
         {
             Entity p = em.CreateEntity(packetArch);
+
             em.SetComponentData(p, new Packet
             {
                 CurrentEdge = AB,
@@ -76,5 +53,47 @@ public class LoomBootstrap : MonoBehaviour
             buffer.Add(new PacketRoute { Edge = BC });
             buffer.Add(new PacketRoute { Edge = CA });
         }
+    }
+
+    Entity CreateNode(EntityManager em, EntityArchetype nodeArch, EntityArchetype internalEdgeArch, float3 pos)
+    {
+        Entity node = em.CreateEntity(nodeArch);
+
+        // Create the node's internal edge (belt inside machine)
+        Entity internalEdge = em.CreateEntity(internalEdgeArch);
+
+        em.SetComponentData(internalEdge, new Edge
+        {
+            FromNode = node,
+            ToNode = node,
+            Length = 5f,     // visible processing distance
+            Capacity = 1000,
+            Occupancy = 0
+        });
+
+        em.SetComponentData(node, new Node
+        {
+            InternalEdge = internalEdge
+        });
+
+        em.SetComponentData(node, new NodeTransform { Position = pos });
+
+        return node;
+    }
+
+    Entity CreateEdge(EntityManager em, EntityArchetype edgeArch, Entity from, Entity to, float length, int capacity)
+    {
+        Entity edge = em.CreateEntity(edgeArch);
+
+        em.SetComponentData(edge, new Edge
+        {
+            FromNode = from,
+            ToNode = to,
+            Length = length,
+            Capacity = capacity,
+            Occupancy = 0
+        });
+
+        return edge;
     }
 }
