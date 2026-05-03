@@ -1,64 +1,134 @@
 # Loom — Distributed Systems Sandbox Simulator
 
-## What It Is
+Loom is a real-time spatial simulator that makes distributed systems tangible.
 
-Loom is a real-time spatial simulator that makes distributed systems tangible. Abstract concepts — latency, throughput, queuing, routing, load balancing — become observable motion in physical space.
+Latency, throughput, queuing, routing, load balancing, and compute time are not
+numbers or timers — they are **visible motion through constrained geometry**, expressed as beads on strings.
 
-**Core premise:** Distributed systems are packets moving through constrained geometry. All system behavior must emerge from movement and structure alone. No timers, no hidden delays, no abstract processing logic.
-
----
-
-## Physical Metaphor
-
-| Concept      | Representation                                          |
-| ------------ | ------------------------------------------------------- |
-| Node         | A compute location (server, service, DB)                |
-| Edge         | A constrained path between nodes (latency = distance)   |
-| Mechanism    | A physical actor — intercepts packets, applies a rule   |
-| Packet       | A unit of work (moving bead on a string)                |
-| Throughput   | Path capacity                                           |
-| Compute time | Distance traversed inside a node                        |
-| Routing      | A mechanism selecting the least-congested outbound edge |
+> Distributed systems are packets moving through space.
 
 ---
 
-## Architecture
+## The Prime Directive
 
-Everything is built from three primitives: **Node**, **Edge**, **Mechanism**. No other structural concepts exist.
+**Everything in Loom must be explainable as movement through constrained geometry.**
 
-The model is recursive. A node contains a graph of child nodes, edges, and mechanisms. Those children can contain their own graphs. The same traversal logic applies at every level.
+- Distance is time
+- Capacity is throughput
+- Congestion is queuing
+- Structure creates behavior
+- No timers, no hidden delays, no abstract “processing” states
+
+If it cannot be seen in the scene, it does not exist in the simulation.
+
+---
+
+## The Four Primitives
+
+Everything in Loom is built from four primitives. They exist for different reasons
+and must not be conflated.
+
+| Primitive     | Role        | Why it exists                                    |
+| ------------- | ----------- | ------------------------------------------------ |
+| **Node**      | Containment | Forces packets to traverse internal structure    |
+| **Edge**      | Transport   | Distance = latency, capacity = throughput        |
+| **Mechanism** | Decision    | The only place routing or filtering logic lives  |
+| **Packet**    | Traveler    | Moves, carries a destination, makes no decisions |
+
+---
+
+## The Two Mental Models (both true)
+
+### From the packet’s perspective (topology)
 
 ```
-Topology
-  └── Node → Edge → Mechanism → Edge → Node
-                          └── Node (contains its own graph)
+Edge → Mechanism → Edge → Mechanism → Edge
 ```
 
-Mechanisms are the only things that make decisions. Nodes are places. Edges are paths. Packets are dumb — they carry a destination and move. All intelligence lives in mechanisms.
+Packets never experience “a node”.  
+They experience paths and decision points.
 
-### Traversal Rules
+### From the world’s perspective (containment)
 
-- **Plain node, 1 outbound edge:** auto-forwarded by `PacketTraverseSystem`
-- **Plain node, 0 outbound edges:** packet waits — correct backpressure
-- **Plain node, >1 outbound edges:** misconfiguration — packets pile up visibly
-- **Mechanism:** stamps `AwaitingRouting`, `MechanismSystem` selects outbound edge from `MechanismConnections`
+```
+Edge → [Node containing edges and mechanisms] → Edge
+```
+
+Nodes are real simulation entities. They prevent packets from bypassing
+what is intended to be “inside” a server, load balancer, database, etc.
+
+This dual truth is the core insight of Loom.
 
 ---
 
-## Node Types
+## How Behavior Emerges
 
-Node types are **recipes** — `NodeTypeDefinition` ScriptableObjects describing how a node is assembled from child nodes and mechanisms. They never enter the ECS world. Type is not declared at runtime; it is recognized by matching assembled structure against a recipe (Phase 2).
+Nothing is scripted.
 
-**Entry point** = first child in the recipe. **Exit points** = all entities in the last group.
-`Intake` and `Egress` node types have been removed — entry and exit are structural positions, not named types.
+| Behavior     | Emerges from                                 |
+| ------------ | -------------------------------------------- |
+| Queuing      | Edge capacity limits                         |
+| Backpressure | Packets waiting at saturated edges           |
+| Compute time | Distance traveled inside a node              |
+| Routing      | Mechanisms selecting outbound edges          |
+| Node “type”  | Recognized from internal structure (recipes) |
 
-| Asset          | Recipe                                   | Notes                          |
-| -------------- | ---------------------------------------- | ------------------------------ |
-| ProcessingLane | Leaf                                     | edgeCapacity:1, pathLength:3.0 |
-| WebServer      | Route x1 → ProcessingLane x16 → Route x1 | Fan-out, process, collect      |
-| Database       | Route x1 → ProcessingLane x4 → Route x1  | Fewer lanes, saturates faster  |
-| LoadBalancer   | Route x1 → ProcessingLane x8             | Distribute across 8 backends   |
-| Cache          | ProcessingLane x1                        | Single lane, no routing needed |
+Nodes are places.  
+Packets are dumb.  
+Mechanisms are the only actors.
+
+---
+
+## Recursive Simulation
+
+A node is not a point. It is a graph.
+
+That graph is built from more nodes, edges, and mechanisms, and those nodes
+can contain their own graphs. This recursion is unbounded.
+
+```
+Node
+ └── Edge → Mechanism → Edge → Node
+                                └── (contains its own graph)
+```
+
+Zooming in reveals more structure — not decoration.
+
+---
+
+## Traversal Rules
+
+- Plain node, **1 outbound edge** → auto-forward
+- Plain node, **0 outbound edges** → packet waits (correct backpressure)
+- Plain node, **>1 outbound edges** → misconfiguration (no mechanism to choose)
+- Mechanism → stamps `AwaitingRouting`, `MechanismSystem` selects next edge
+
+Mechanisms own all routing decisions — never nodes, never packets.
+
+---
+
+## Node Types (Recipes)
+
+Node types are **recipes** (`NodeTypeDefinition` ScriptableObjects) describing
+how a node is assembled from child nodes and mechanisms.
+
+They never enter the ECS world.
+
+- Entry point = first child in the recipe
+- Exit points = all entities in the last child group
+- Type is **recognized**, not declared (Phase 2)
+
+Examples:
+
+| Asset          | Recipe                           |
+| -------------- | -------------------------------- |
+| ProcessingLane | Leaf node (capacity 1, path 3.0) |
+| WebServer      | Route ×1 → ProcessingLane ×16    |
+| Database       | Route ×1 → ProcessingLane ×4     |
+| LoadBalancer   | Route ×1 → ProcessingLane ×8     |
+| Cache          | ProcessingLane ×1                |
+
+All lanes exit independently. No collector mechanism.
 
 ---
 
@@ -66,55 +136,56 @@ Node types are **recipes** — `NodeTypeDefinition` ScriptableObjects describing
 
 - **Engine:** Unity (URP)
 - **Architecture:** ECS / DOTS (C#)
-- **Rendering:** Hybrid ECS-driven (`PacketVisualizer`, `EdgeVisualizer`)
-- **Scale target:** 10k–100k+ packets
+- **Rendering:** Hybrid ECS-driven visualizers
+- **Scale target:** 10,000–100,000+ packets
 
 ---
 
 ## Design Rules
 
-- Three primitives only: Node, Edge, Mechanism
-- Packets are dumb — they carry a destination, mechanisms decide the path
-- All behavior emerges from movement through edges
-- No timers, no wait states, no artificial delays
-- Node type is recognized from structure, never declared
-- Mechanisms own all routing decisions — never nodes, never packets
-- A plain node with multiple outbound edges is a misconfiguration
+- Only four primitives exist: Node, Edge, Mechanism, Packet
+- Components are data; Systems contain behavior
+- No timers, no abstract states, no fake queues
+- Mechanisms chain for complex behavior (never stack policies)
+- Nodes are containment boundaries, not visual groupings
+- A plain node with multiple outbound edges is a visible mistake
 
 ---
 
 ## Current State
 
-**Milestone 3 complete.** Proven so far:
+Loom currently supports:
 
-- ECS packet movement and edge traversal
-- Dynamic routing via Mechanism entities
-- Working triangle topology with any combination of node types
-- Recursive node spawning from `NodeTypeDefinition` recipes
-- Internal node graphs with mechanisms, processing lanes, and fan-out
-- Capacity-based congestion and backpressure (`WaitingAtNode`)
-- All edges rendered as lines, internal edges tinted distinctly
-- LoadBalancer distributing across 8 lanes concurrently
+- ECS packet traversal across arbitrary graphs
+- Mechanism-based routing
+- Recursive node construction from recipes
+- Internal node graphs producing real compute time
+- Capacity-based congestion and backpressure
+- Edge and packet visualization driven directly from ECS state
+
+A triangle of mixed node types can run indefinitely with observable congestion,
+load balancing, and queuing — without any scripted behavior.
 
 ---
 
-## Phase 1 Goal — Sandbox Mode
+## Phase 1 Goal — Sandbox
 
-An interactive environment to place nodes, connect edges, and observe live packet flow — congestion, routing, and throughput visible in real time.
+An interactive environment to place nodes, connect edges, and observe live
+packet flow where latency, throughput, routing, and congestion are physically visible.
 
-### Milestones
-
-| #   | Status | Description                                                       |
-| --- | ------ | ----------------------------------------------------------------- |
-| 1   | ✅     | Packet movement on edges                                          |
-| 2   | ✅     | Graph routing across full loops                                   |
-| 3   | ✅     | Internal node physics (mechanisms, dynamic routing, backpressure) |
-| 4   | 🎯     | Visualized geometry (splines, spatial layout, internal paths)     |
-| 5   | 🎯     | World builder (drag/drop nodes, live edge connections)            |
-| 6   | 🎯     | Sandbox polish (pause/play/step, metrics, adjustable capacity)    |
+| Milestone | Status | Description                                  |
+| --------- | ------ | -------------------------------------------- |
+| 1         | ✅     | Packet movement on edges                     |
+| 2         | ✅     | Graph routing across loops                   |
+| 3         | ✅     | Internal node physics with mechanisms        |
+| 4         | 🎯     | Spatial geometry & splines                   |
+| 5         | 🎯     | World builder tools                          |
+| 6         | 🎯     | Sandbox polish (pause, metrics, adjustments) |
 
 ---
 
 ## Philosophy
 
-> Simulation first, visualization second. The simulation is never explained — it is observed. All complexity must emerge from structure, not logic.
+> Simulation first. Visualization second.  
+> The simulation is never explained — it is observed.  
+> All complexity must emerge from structure, not logic.
