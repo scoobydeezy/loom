@@ -74,8 +74,61 @@ public partial struct MechanismSystem : ISystem
                     break;
                 }
                 case MechanismKind.Filter:
+                {
+                    // TODO: Implement tail-drop filtering when queue is full (Phase 4).
+                    // For now, pass packet through to next available edge.
+                    if (!em.HasBuffer<MechanismConnections>(atNode))
+                        break;
+
+                    var connections = em.GetBuffer<MechanismConnections>(atNode, true);
+                    if (connections.Length == 0)
+                        break;
+
+                    // Find best headroom (same logic as Route for now)
+                    int bestRoom = 0;
+                    for (int i = 0; i < connections.Length; i++)
+                    {
+                        var next     = em.GetComponentData<Edge>(connections[i].Edge);
+                        int headroom = next.Capacity - next.Occupancy;
+                        if (headroom > bestRoom) bestRoom = headroom;
+                    }
+
+                    if (bestRoom == 0) continue; // all saturated — packet waits
+
+                    // Pick random among ties
+                    int tieCount = 0;
+                    for (int i = 0; i < connections.Length; i++)
+                    {
+                        var next = em.GetComponentData<Edge>(connections[i].Edge);
+                        if (next.Capacity - next.Occupancy == bestRoom) tieCount++;
+                    }
+
+                    int    pick     = UnityEngine.Random.Range(0, tieCount);
+                    int    seen     = 0;
+                    Entity selected = Entity.Null;
+                    for (int i = 0; i < connections.Length; i++)
+                    {
+                        var next = em.GetComponentData<Edge>(connections[i].Edge);
+                        if (next.Capacity - next.Occupancy == bestRoom)
+                        {
+                            if (seen == pick) { selected = connections[i].Edge; break; }
+                            seen++;
+                        }
+                    }
+
+                    var sel = em.GetComponentData<Edge>(selected);
+                    sel.Occupancy++;
+                    em.SetComponentData(selected, sel);
+
+                    p.CurrentEdge  = selected;
+                    p.Progress     = 0f;
+                    packet.ValueRW = p;
+                    ecb.RemoveComponent<AwaitingRouting>(entity);
+                    break;
+                }
                 case MechanismKind.RateLimit:
-                    // stub — no behavior yet
+                    // TODO: Implement rate-limit token bucket (Phase 4).
+                    // For now, pass packet through.
                     break;
             }
         }

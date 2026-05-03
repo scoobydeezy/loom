@@ -165,8 +165,8 @@ public class LoomBootstrap : MonoBehaviour
                     foreach (Entity srcExit in src[s].ExitNodes)
                     {
                         Entity e = MakeEdge(em, edgeArch, srcExit, dst[d].EntryNode, edgeLen, edgeCap);
-                        if (src[s].IsMechanism)
-                            em.GetBuffer<MechanismConnections>(src[s].Node)
+                        if (em.HasComponent<Mechanism>(srcExit))
+                            em.GetBuffer<MechanismConnections>(srcExit)
                               .Add(new MechanismConnections { Edge = e });
                     }
                 }

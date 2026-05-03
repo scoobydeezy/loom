@@ -216,6 +216,8 @@ For `ChildType.Node` children, `outEdgeLength` and `outEdgeCapacity` are read fr
 
 ### Built-in Node Type Assets
 
+#### System Architecture Primitives
+
 | Asset            | Type      | Recipe                        | Notes                                   |
 | ---------------- | --------- | ----------------------------- | --------------------------------------- |
 | `ProcessingLane` | Leaf      | —                             | edgeCapacity: 1, pathLength: 3.0        |
@@ -224,7 +226,16 @@ For `ChildType.Node` children, `outEdgeLength` and `outEdgeCapacity` are read fr
 | `LoadBalancer`   | Composite | Route x1 → ProcessingLane x8  | Distributes across 8 independent lanes  |
 | `Cache`          | Composite | ProcessingLane x1             | Single lane, no routing needed          |
 
-All composite nodes end with plain ProcessingLane nodes as exit points. No collector mechanism. Each lane exits independently and wires directly to the destination node's entry point.
+#### Physical Pattern Library
+
+| Asset            | Type      | Recipe                                    | Notes                                          |
+| ---------------- | --------- | ----------------------------------------- | ---------------------------------------------- |
+| `QueueHolding`   | Leaf      | —                                         | edgeCapacity: 100, pathLength: 0.1; buffer node where packets visibly accumulate |
+| `Queue`          | Composite | Filter x1 → QueueHolding x1 → Route x1   | **Phase 1 structural scaffolding.** Enforces admission control (Filter), materializes buffering (QueueHolding), distributes (Route). Drop logic is Phase 4; currently passes packets through. |
+
+**Physical Pattern Library** — Nodes that make latent distributed-systems behavior visible as observable structure.
+
+All composite nodes end with lane nodes as exit points. No collector mechanism. Each lane exits independently and wires directly to the destination node's entry point.
 
 ### Type Recognition (Phase 2)
 
@@ -267,7 +278,9 @@ Assets/
 │       ├── WebServer.asset           # Route x1 → ProcessingLane x16
 │       ├── Database.asset            # Route x1 → ProcessingLane x4
 │       ├── LoadBalancer.asset        # Route x1 → ProcessingLane x8
-│       └── Cache.asset               # ProcessingLane x1
+│       ├── Cache.asset               # ProcessingLane x1
+│       ├── QueueHolding.asset        # Leaf buffer node — edgeCapacity:100, pathLength:0.1
+│       └── Queue.asset               # Filter x1 → QueueHolding x1 → Route x1
 ├── Edges/
 │   └── Components/
 │       └── Edge.cs                   # FromNode, ToNode, Length, Capacity, Occupancy

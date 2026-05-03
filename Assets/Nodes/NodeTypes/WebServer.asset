@@ -14,6 +14,13 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::NodeTypeDefinition
   typeName: WebServer
   children:
+  - childType: 0
+    definition: {fileID: 11400000, guid: b2a3d4c5e6f7a8b9c0d1e2f3a4b5c6d7, type: 2}
+    mechanismKind: 0
+    count: 1
+    outEdgeLength: 0.1
+    outEdgeCapacity: 50
+    role: ingress queue
   - childType: 1
     definition: {fileID: 0}
     mechanismKind: 0
