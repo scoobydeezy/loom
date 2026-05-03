@@ -13,7 +13,15 @@ MonoBehaviour:
   m_Name: WebServer
   m_EditorClassIdentifier: Assembly-CSharp::NodeTypeDefinition
   typeName: WebServer
-  laneCount: 16
-  queueCapacity: 128
-  internalPathLength: 3
-  exitCapacity: 16
+  children:
+  - definition: {fileID: 11400000, guid: 25bb950c055755f4eac47d266ef56cba, type: 2}
+    count: 1
+    role: intake
+  - definition: {fileID: 11400000, guid: e9ede9398a3fb6e42a0b5bed7f8a9d24, type: 2}
+    count: 16
+    role: processing
+  - definition: {fileID: 11400000, guid: 5be84dcb5a706a04b81ac16430c6469f, type: 2}
+    count: 1
+    role: egress
+  edgeCapacity: 1
+  internalPathLength: 1

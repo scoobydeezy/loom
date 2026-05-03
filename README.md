@@ -1,7 +1,3 @@
-Here's a rewritten version that's tighter, removes redundancy, and works as a self-contained context primer for a new chat:
-
----
-
 # Loom — Distributed Systems Sandbox Simulator
 
 ## What It Is
@@ -25,28 +21,40 @@ Loom is a real-time spatial simulator that makes distributed systems tangible. A
 
 ---
 
-## Two-Layer Architecture
+## Architecture
 
-### 1. Global Graph
+The model is recursive. A node can contain a graph of child nodes and edges. Those children can contain their own graphs. The same mechanic — packets moving through edges — applies at every level of nesting.
+
+```
+Topology
+  └── Node (composite — contains child nodes + edges)
+        └── Node (composite)
+              └── Node (leaf — just position and edge properties)
+```
+
+There is no special Part type. A processing lane, a node interior, and a cluster are all the same thing: nodes connected by edges. Nesting depth is the only distinction, expressed via the `NodeParent` component.
+
+### Global Graph
 
 `Node ↔ Edge ↔ Node ↔ Edge ↔ Node`
 
 Represents system topology. Edges only connect Nodes. Handles inter-service routing.
 
-### 2. Internal Node Space
+### Internal Node Space
 
-`Entry → internal lanes/queues → Exit`
+`Entry → [child nodes + edges] → Exit`
 
-Each node is itself a graph. Compute time = distance. Queues emerge from congestion, not logic.
+Each node is itself a graph. Compute time = distance. Queues emerge from congestion, not logic. Nesting is unbounded.
 
 ---
 
-## System Layers
+## Node Types
 
-1. **Graph** — Global topology (nodes + edges)
-2. **Packet** — Movement and traversal
-3. **Node** — Internal structure (lanes, queues, constraints)
-4. **Rendering** — Visualization of simulation state
+Node types are **recipes** — `NodeTypeDefinition` ScriptableObjects that describe how a node should be assembled from child nodes and edges. They never enter the ECS world. Type is not declared at runtime; it is recognized by matching assembled structure against a recipe (Phase 2).
+
+**Leaf types** (no children): `Intake`, `ProcessingLane`, `Egress`
+
+**Composite types** (assembled from leaves): `WebServer`, `Database`, `LoadBalancer`, `Cache`
 
 ---
 
@@ -54,29 +62,33 @@ Each node is itself a graph. Compute time = distance. Queues emerge from congest
 
 - **Engine:** Unity (URP)
 - **Architecture:** ECS / DOTS (C#)
-- **Rendering:** Hybrid ECS-driven
+- **Rendering:** Hybrid ECS-driven (`PacketVisualizer`, `EdgeVisualizer`)
 - **Scale target:** 10k–100k+ packets
 
 ---
 
 ## Design Rules
 
-- Edges only connect Nodes
+- Edges only connect Nodes, at every level of nesting
 - All behavior emerges from movement through edges
 - No timers, no wait states, no artificial delays
-- ECS: Components = data, Systems = movement, behavior emerges from structure
+- Node type is recognized from structure, never declared
+- ECS: Components = data, Systems = behavior, everything else is emergence
 
 ---
 
 ## Current State
 
-**Milestone 2 complete.** Proven so far:
+**Milestone 3 in progress.** Proven so far:
 
 - ECS packet movement and edge traversal
 - Graph routing across nodes
 - Working triangle topology (A → B → C → A)
 - Capacity-based congestion
 - Visual packet motion
+- Recursive node spawning from `NodeTypeDefinition` recipes
+- Internal node graphs (composite nodes with child nodes and edges)
+- All edges rendered as lines via `EdgeVisualizer`
 
 ---
 
@@ -90,7 +102,7 @@ An interactive environment to place nodes, connect edges, and observe live packe
 | --- | ------ | -------------------------------------------------------------- |
 | 1   | ✅     | Packet movement on edges                                       |
 | 2   | ✅     | Graph routing across full loops                                |
-| 3   | 🎯     | Internal node physics (lanes, queues, entry/exit)              |
+| 3   | 🔄     | Internal node physics (recursive spawning, composite nodes)    |
 | 4   | 🎯     | Visualized geometry (splines, spatial layout, internal paths)  |
 | 5   | 🎯     | World builder (drag/drop nodes, live edge connections)         |
 | 6   | 🎯     | Sandbox polish (pause/play/step, metrics, adjustable capacity) |

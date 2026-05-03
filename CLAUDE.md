@@ -51,7 +51,18 @@ This is not a stylistic preference. It is an architectural constraint that gover
 
 ## Architecture
 
-### Two-Layer Simulation Model
+### Recursive Simulation Model
+
+The architecture is recursive. A node can contain a graph of child nodes and edges. Those child nodes can themselves contain graphs. The same mechanic — packets moving through edges — applies at every level of nesting.
+
+```
+Topology (nodes + edges)
+    └── Node (contains a graph of child nodes + edges)
+            └── Node (contains a graph of child nodes + edges)
+                    └── Node (leaf — no children, just position and edge properties)
+```
+
+There is no special "Part" type. There is no distinction between a processing lane, a node interior, and a cluster. They are all nodes connected by edges. The only structural concept is nesting depth, expressed via the `NodeParent` component.
 
 **Layer 1: Global Graph**
 
@@ -63,15 +74,20 @@ Node ↔ Edge ↔ Node ↔ Edge ↔ Node
 - Edges only ever connect Nodes — no exceptions
 - Handles inter-service routing
 
-**Layer 2: Internal Node Space**
+**Layer 2+: Internal Node Space**
 
 ```
-Entry → [internal lanes / queues / edges] → Exit
+Entry → [child nodes + edges] → Exit
 ```
 
-- Each Node is itself a graph
+- Each Node is itself a graph of child Nodes connected by Edges
 - Compute time = distance traversed inside the node
 - Queues emerge from structural congestion, not logic
+- Nesting is unbounded — a cluster is a node whose children are themselves composite nodes
+
+### Exit Points
+
+Most nodes have a single exit point. Nodes with multiple egress children (e.g. a load balancer with 8 egress lanes) have **multiple exit points** — one per egress child. In the world builder, each exit point wires to a distinct downstream node. `SpawnResult.ExitNode` must become `SpawnResult.ExitNodes` (plural) before the world builder is implemented.
 
 ### System Layers (in dependency order)
 
@@ -112,12 +128,13 @@ This project uses Unity's Entity Component System. Always adhere to ECS idioms:
 Components are named after the concept they represent — not suffixed with `Data`. The component **is** the thing, not a description of it. `Node.cs` is the Node. `Packet.cs` is the Packet. This reinforces that simulation entities are defined entirely by their components, and that no "real" counterpart exists elsewhere.
 
 ```
-Components:       Node, NodeTransform, NodeType, Edge, Packet, PacketProgress, PacketRouteIndex, QueueState, EdgeCapacity
-Buffers:          PacketRoute, NodeQueue
-Tags:             PacketInTransitTag, NodeActiveTag, EdgeSaturatedTag
-Systems:          PacketTraverseSystem, NodeDispatchSystem, EdgeCapacitySystem, RoutingSystem
-Aspects:          PacketAspect, NodeAspect (when grouping related component access)
-ScriptableObjects: NodeTypeDefinition (configuration recipes — never enter ECS world directly)
+Components:        Node, NodeTransform, NodeType, NodeParent, Edge, Packet, PacketProgress, PacketRouteIndex, QueueState, EdgeCapacity
+Buffers:           PacketRoute, NodeQueue
+Tags:              PacketInTransitTag, NodeActiveTag, EdgeSaturatedTag
+Systems:           PacketTraverseSystem, NodeDispatchSystem, EdgeCapacitySystem, RoutingSystem
+Aspects:           PacketAspect, NodeAspect (when grouping related component access)
+MonoBehaviours:    LoomBootstrap, PacketVisualizer, EdgeVisualizer (editor/rendering only)
+ScriptableObjects: NodeTypeDefinition (recipe descriptors — never enter ECS world directly)
 ```
 
 ---
@@ -145,6 +162,143 @@ ScriptableObjects: NodeTypeDefinition (configuration recipes — never enter ECS
 - Queuing is not implemented — it emerges when edge capacity is saturated.
 - Backpressure is not implemented — it emerges from queue depth.
 - Congestion is not implemented — it emerges from packet density.
+- Node type is not declared — it is recognized by matching assembled structure against a recipe.
+
+---
+
+## Node Type System
+
+Node configuration is data-driven via **ScriptableObjects**. A `NodeTypeDefinition` is a recipe — a description of how a node should be assembled from child nodes and edges. It is used by `LoomBootstrap` (and eventually the world builder) to construct the ECS entity graph. The ScriptableObject itself never enters the ECS world.
+
+### NodeTypeDefinition Properties
+
+| Property             | Type         | Meaning                                                                 |
+| -------------------- | ------------ | ----------------------------------------------------------------------- |
+| `typeName`           | string       | Display label                                                           |
+| `children`           | ChildEntry[] | Ordered list of child node types and counts                             |
+| `edgeCapacity`       | int          | Capacity of edges connecting this node to its siblings                  |
+| `internalPathLength` | float        | Travel distance through this node (leaf nodes only — ignored otherwise) |
+
+**ChildEntry fields:** `definition` (NodeTypeDefinition), `count` (int), `role` (string — human-readable label only, not enforced by simulation).
+
+### Leaf vs. Composite Nodes
+
+- **Leaf nodes** have no children. Their behavior is defined entirely by `edgeCapacity` and `internalPathLength`.
+- **Composite nodes** have children. Their behavior emerges from the graph those children form. `internalPathLength` is ignored on composite nodes.
+
+### Built-in Node Type Assets
+
+| Asset            | Type      | Children                                 | Notes                              |
+| ---------------- | --------- | ---------------------------------------- | ---------------------------------- |
+| `Intake`         | Leaf      | —                                        | edgeCapacity: 50, pathLength: 0.2  |
+| `ProcessingLane` | Leaf      | —                                        | edgeCapacity: 1, pathLength: 3.0   |
+| `Egress`         | Leaf      | —                                        | edgeCapacity: 50, pathLength: 0.2  |
+| `WebServer`      | Composite | Intake x1, ProcessingLane x16, Egress x1 |                                    |
+| `Database`       | Composite | Intake x1, ProcessingLane x4, Egress x1  | Saturates fast                     |
+| `LoadBalancer`   | Composite | Intake x1, ProcessingLane x1, Egress x8  | Near-zero path length, wide egress |
+| `Cache`          | Composite | Intake x1, ProcessingLane x1, Egress x1  | Near-zero path length              |
+
+### Type Recognition (Future)
+
+Node type is not declared at runtime — it is **recognized**. A recipe matcher compares assembled node structure against `NodeTypeDefinition` patterns and surfaces a label when there is a match. This is a UI/presentation concern only. The simulation has no concept of type. A misconfigured node that happens to perform like a load balancer is not recognized as one — the recipe matches structure, not behavior.
+
+This system does not exist yet. It belongs in Phase 2.
+
+---
+
+## Rendering
+
+All rendering is handled by hybrid MonoBehaviours that read ECS state and drive GameObjects. The simulation is never aware of the renderer.
+
+### EdgeVisualizer
+
+`EdgeVisualizer.cs` renders every edge in the simulation — global and internal — as a `LineRenderer`. It reads `Edge` component data each frame, resolves `FromNode` and `ToNode` positions from `NodeTransform`, and updates line endpoints. Node positions are the single source of truth — the visualizer never caches positions.
+
+All edges at all nesting depths are rendered. There is no filtering by depth.
+
+### PacketVisualizer
+
+`PacketVisualizer.cs` renders packets as moving objects. Each packet lerps between its current edge's `FromNode` and `ToNode` positions using its `Progress` value. Child nodes have their own positions, so internal traversal visualizes naturally with no special cases.
+
+---
+
+## File & Folder Structure
+
+Files are grouped by **domain**, not by type.
+
+```
+Assets/
+├── Bootstrap/
+│   └── LoomBootstrap.cs              # World init, recursive node spawner
+├── Packets/
+│   ├── Components/
+│   │   └── Packet.cs
+│   ├── Buffers/
+│   │   └── PacketRoute.cs
+│   └── Systems/
+│       └── PacketTraverseSystem.cs
+├── Nodes/
+│   ├── Components/
+│   │   ├── Node.cs
+│   │   ├── NodeTransform.cs
+│   │   ├── NodeType.cs
+│   │   └── NodeParent.cs             # Marks a node as belonging to another node's internal graph
+│   └── NodeTypes/                    # ScriptableObject recipe assets
+│       ├── NodeTypeDefinition.cs
+│       ├── Intake.asset
+│       ├── ProcessingLane.asset
+│       ├── Egress.asset
+│       ├── WebServer.asset
+│       ├── Database.asset
+│       ├── LoadBalancer.asset
+│       └── Cache.asset
+├── Edges/
+│   └── Components/
+│       └── Edge.cs
+└── Rendering/
+    ├── PacketVisualizer.cs           # Hybrid renderer — reads ECS, drives GameObjects
+    └── EdgeVisualizer.cs             # Renders every edge as a LineRenderer
+```
+
+**Rules for new domains:** If a concept needs more than one component or its own system, it gets a domain folder. Shared utilities that serve multiple domains live in a top-level `Shared/` folder.
+
+---
+
+## Known Future Work
+
+These are architectural decisions made but not yet implemented. Do not work around them — implement them when their milestone arrives.
+
+- **`SpawnResult.ExitNode` → `ExitNodes` (plural):** Load balancers and other wide-egress nodes have multiple exit points. Each wires to a distinct downstream node. This must be resolved before the world builder (Milestone 5) is implemented.
+- **Recipe matcher:** Structural pattern recognition that compares assembled node graphs against `NodeTypeDefinition` recipes and surfaces a type label. Belongs in Phase 2.
+- **Node dragging:** Nodes will be draggable mid-simulation. `EdgeVisualizer` and `PacketVisualizer` already support this — they read positions every frame. No changes needed to the renderers when this is implemented.
+
+---
+
+## What Not To Do (Common AI Mistakes to Avoid)
+
+These patterns are tempting but violate Loom's architecture. Reject them if suggested:
+
+| Anti-Pattern                               | Why It's Wrong                        | Correct Alternative                               |
+| ------------------------------------------ | ------------------------------------- | ------------------------------------------------- |
+| `yield return new WaitForSeconds(latency)` | Hidden timer, not spatial             | Make the edge longer                              |
+| `packetState = Processing; timer -= dt;`   | Abstract state machine                | Route packet through internal node graph          |
+| Lerp with a fixed duration                 | Duration is a timer                   | Lerp with a fixed speed; distance determines time |
+| `if (isProcessing) skip` flags             | Invisible logic                       | Capacity constraint on the edge                   |
+| Separate "queue list" data structure       | Logic-based queue                     | Packets physically waiting at edge entry          |
+| `Part` component or slot-type enums        | Redundant abstraction                 | Nodes are nodes at every level of nesting         |
+| Declaring node type at spawn time          | Type is recognized, not declared      | Recipe matcher reads structure, surfaces label    |
+| Single `ExitNode` for wide-egress nodes    | Breaks load balancer fan-out topology | `ExitNodes` (plural), one per egress child        |
+
+---
+
+## Coding Standards
+
+- **Burst-compatible code** wherever possible — avoid managed allocations in hot paths
+- **`NativeArray` / `NativeList`** for collections inside jobs
+- **`[ReadOnly]`** attributes on job fields that don't write
+- XML doc comments on all public-facing Components and Systems
+- Systems should have a single, clearly named responsibility
+- Prefer composition over inheritance — always
 
 ---
 
@@ -182,7 +336,7 @@ The user can construct arbitrary topologies from scratch and watch them run. No 
 - **Typed nodes** with distinct visual identities and behavioral properties: web server, database, load balancer, cache, message queue, CDN, DNS resolver, API gateway, etc.
 - **Typed edges** with protocol semantics: HTTP, TCP, UDP, WebSocket — affecting packet behavior and capacity defaults
 - **Packet typing**: read requests, write requests, health checks, cache hits — each with different routing or priority characteristics
-- **Preset configurations** for common node types (e.g. a load balancer defaults to round-robin routing across its edges)
+- **Recipe matching**: assembled node structures are compared against `NodeTypeDefinition` patterns; matching structures surface a type label organically
 - **Architecture templates**: FTP server, three-tier web app, basic microservices cluster — importable starting points
 
 **Definition of done:** A user can assemble a recognizable, labeled architecture (e.g. "Nginx → App Server → Postgres") and have it behave differently from an unlabeled graph of the same shape.
@@ -235,114 +389,6 @@ The user can construct arbitrary topologies from scratch and watch them run. No 
 - **API / headless mode**: run simulations programmatically for integration with external tools or curriculum platforms
 
 **Definition of done:** A user can publish an architecture blueprint, and another user can import and extend it without any direct coordination.
-
----
-
-## What Not To Do (Common AI Mistakes to Avoid)
-
-These patterns are tempting but violate Loom's architecture. Reject them if suggested:
-
-| Anti-Pattern                               | Why It's Wrong            | Correct Alternative                               |
-| ------------------------------------------ | ------------------------- | ------------------------------------------------- |
-| `yield return new WaitForSeconds(latency)` | Hidden timer, not spatial | Make the edge longer                              |
-| `packetState = Processing; timer -= dt;`   | Abstract state machine    | Route packet through internal node graph          |
-| Lerp with a fixed duration                 | Duration is a timer       | Lerp with a fixed speed; distance determines time |
-| `if (isProcessing) skip` flags             | Invisible logic           | Capacity constraint on the edge                   |
-| Separate "queue list" data structure       | Logic-based queue         | Packets physically waiting at edge entry          |
-
----
-
-## File & Folder Structure
-
-Files are grouped by **domain**, not by type. This keeps all related components, buffers, and systems co-located as the codebase grows. A domain with 10 files stays navigable; a flat `Components/` folder with 40+ files does not.
-
-```
-Assets/
-└── Loom/
-    ├── Bootstrap/
-    │   └── LoomBootstrap.cs              # World init, system ordering
-    ├── Packets/
-    │   ├── Components/
-    │   │   ├── Packet.cs
-    │   │   ├── PacketProgress.cs         # (soon)
-    │   │   └── PacketRouteIndex.cs       # (soon)
-    │   ├── Buffers/
-    │   │   └── PacketRoute.cs
-    │   └── Systems/
-    │       └── PacketTraverseSystem.cs
-    ├── Nodes/
-    │   ├── Components/
-    │   │   ├── Node.cs
-    │   │   ├── NodeTransform.cs
-    │   │   └── NodeType.cs
-    │   ├── Buffers/
-    │   │   └── NodeQueue.cs              # (soon)
-    │   ├── Systems/
-    │   │   └── NodeDispatchSystem.cs     # (soon)
-    │   └── NodeTypes/                    # ScriptableObject assets (configuration only)
-    │       ├── NodeTypeDefinition.cs     # ScriptableObject class definition
-    │       ├── WebServer.asset
-    │       ├── Database.asset
-    │       ├── LoadBalancer.asset
-    │       └── Cache.asset
-    ├── Edges/
-    │   ├── Components/
-    │   │   └── Edge.cs
-    │   └── Systems/
-    │       └── EdgeCapacitySystem.cs     # (soon)
-    ├── Rendering/
-    │   └── PacketVisualizer.cs           # Hybrid renderer — reads ECS, drives GameObjects/VFX
-    └── Prefabs/
-```
-
-**Rules for new domains:** If a concept needs more than one component or its own system, it gets a domain folder. Shared utilities that serve multiple domains live in a top-level `Loom/Shared/` folder.
-
----
-
-## Node Type System
-
-Node configuration is data-driven via **ScriptableObjects**. A `NodeTypeDefinition` asset defines the properties of a class of node. When a node is spawned, `LoomBootstrap` reads the assigned definition and uses its values to compose ECS components and build the node's internal topology. The ScriptableObject itself never enters the ECS world.
-
-### Why ScriptableObjects
-
-- Native to Unity's asset pipeline — no custom parsing
-- Appear in the editor as inspectable, drag-and-drop assets
-- Live in the project like prefabs; no scene or GameObject required
-- Decouples configuration from code — new node types require no new C#
-
-### NodeTypeDefinition Properties
-
-| Property             | Type   | Meaning                                                                 |
-| -------------------- | ------ | ----------------------------------------------------------------------- |
-| `typeName`           | string | Display label                                                           |
-| `laneCount`          | int    | Worker concurrency — how many packets the node processes simultaneously |
-| `queueCapacity`      | int    | Max packets waiting at the entry edge before backpressure               |
-| `internalPathLength` | float  | Distance packets travel inside the node — determines compute time       |
-| `exitCapacity`       | int    | Capacity of the exit edge                                               |
-
-### Built-in Node Types
-
-| Type             | laneCount | queueCapacity | internalPathLength | Notes                                               |
-| ---------------- | --------- | ------------- | ------------------ | --------------------------------------------------- |
-| **WebServer**    | 16        | 128           | medium             | Many workers, moderate compute                      |
-| **Database**     | 4         | 20            | long               | Few connections, expensive queries — saturates fast |
-| **LoadBalancer** | 64        | 256           | near-zero          | High concurrency, near-invisible latency            |
-| **Cache**        | 1         | 32            | near-zero          | Single-threaded, near-instant response              |
-
-### Lane Count as a First-Class Property
-
-Lane count represents **worker concurrency** — the number of things a node can do simultaneously. It is the single most important property distinguishing node types. A database with 4 lanes behaves fundamentally differently from a web server with 16. Never hard-code lane count; always derive it from the `NodeTypeDefinition`.
-
----
-
-## Coding Standards
-
-- **Burst-compatible code** wherever possible — avoid managed allocations in hot paths
-- **`NativeArray` / `NativeList`** for collections inside jobs
-- **`[ReadOnly]`** attributes on job fields that don't write
-- XML doc comments on all public-facing Components and Systems
-- Systems should have a single, clearly named responsibility
-- Prefer composition over inheritance — always
 
 ---
 
