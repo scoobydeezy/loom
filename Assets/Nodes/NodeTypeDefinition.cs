@@ -1,14 +1,25 @@
 using UnityEngine;
 using System;
 
+public enum ChildType { Node, Mechanism }
+
 /// <summary>
-/// A child entry in a NodeTypeDefinition's assembly recipe.
+/// One entry in a NodeTypeDefinition's internal-graph recipe.
+/// childType selects whether this entry instantiates a Node subtree or a Mechanism entity.
 /// </summary>
 [Serializable]
 public class NodeTypeChild
 {
-    public NodeTypeDefinition definition;
-    public int count = 1;
+    public ChildType          childType     = ChildType.Node;
+    public NodeTypeDefinition definition;                           // ChildType.Node only
+    public MechanismKind      mechanismKind = MechanismKind.Route; // ChildType.Mechanism only
+    public int                count         = 1;
+
+    [Tooltip("Length of outgoing edges from this child to the next group. Mechanism children only — Node children use definition.internalPathLength.")]
+    public float outEdgeLength = 0.2f;
+
+    [Tooltip("Capacity of outgoing edges from this child to the next group. Mechanism children only — Node children use definition.edgeCapacity.")]
+    public int outEdgeCapacity = 50;
 
     [Tooltip("Freeform label for human readability and future recipe matching. Not enforced by simulation.")]
     public string role;
@@ -26,7 +37,7 @@ public class NodeTypeDefinition : ScriptableObject
 {
     public string typeName;
 
-    [Tooltip("Child node types assembled into this node's internal graph. Empty = leaf node.")]
+    [Tooltip("Child entries (nodes or mechanisms) assembled into this node's internal graph. Empty = leaf node.")]
     public NodeTypeChild[] children;
 
     [Tooltip("Capacity of outgoing edges from this node type to adjacent siblings.")]

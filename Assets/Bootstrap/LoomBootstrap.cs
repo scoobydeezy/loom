@@ -12,18 +12,15 @@ public class LoomBootstrap : MonoBehaviour
     public NodeTypeDefinition nodeBType;
     public NodeTypeDefinition nodeCType;
 
-    // -------------------------------------------------------------------------
-    // Start
-    // -------------------------------------------------------------------------
-
     void Start()
     {
         var em = World.DefaultGameObjectInjectionWorld.EntityManager;
 
-        var topArch    = em.CreateArchetype(typeof(Node), typeof(NodeType), typeof(NodeTransform));
-        var childArch  = em.CreateArchetype(typeof(Node), typeof(NodeTransform), typeof(NodeParent));
-        var edgeArch   = em.CreateArchetype(typeof(Edge));
-        var packetArch = em.CreateArchetype(typeof(Packet));
+        var topArch          = em.CreateArchetype(typeof(Node), typeof(NodeType), typeof(NodeTransform));
+        var childArch        = em.CreateArchetype(typeof(Node), typeof(NodeTransform), typeof(NodeParent));
+        var internalMechArch = em.CreateArchetype(typeof(Mechanism), typeof(MechanismType), typeof(NodeTransform), typeof(MechanismConnections), typeof(NodeParent));
+        var edgeArch         = em.CreateArchetype(typeof(Edge));
+        var packetArch       = em.CreateArchetype(typeof(Packet), typeof(PacketDestination));
 
         if (nodeAType == null || nodeBType == null || nodeCType == null)
         {
@@ -31,50 +28,37 @@ public class LoomBootstrap : MonoBehaviour
             return;
         }
 
-        // Each node's internal graph is determined entirely by its NodeTypeDefinition recipe.
-        var resultA = SpawnNode(em, topArch, childArch, edgeArch, nodeAType, new float3(-5, 0, 0), Entity.Null, id: 0);
-        var resultB = SpawnNode(em, topArch, childArch, edgeArch, nodeBType, new float3( 5, 0, 0), Entity.Null, id: 1);
-        var resultC = SpawnNode(em, topArch, childArch, edgeArch, nodeCType, new float3( 0, 0, 6), Entity.Null, id: 2);
+        var resultA = SpawnNode(em, topArch, childArch, internalMechArch, edgeArch, nodeAType, new float3(-5, 0, 0), Entity.Null, id: 0);
+        var resultB = SpawnNode(em, topArch, childArch, internalMechArch, edgeArch, nodeBType, new float3( 5, 0, 0), Entity.Null, id: 1);
+        var resultC = SpawnNode(em, topArch, childArch, internalMechArch, edgeArch, nodeCType, new float3( 0, 0, 6), Entity.Null, id: 2);
 
-        // Global edges wire between each node's exit boundary and the next node's entry boundary.
-        Entity edgeAB = MakeEdge(em, edgeArch, resultA.ExitNode, resultB.EntryNode, length: 10f, capacity: 50);
-        Entity edgeBC = MakeEdge(em, edgeArch, resultB.ExitNode, resultC.EntryNode, length: 10f, capacity: 15);
-        Entity edgeCA = MakeEdge(em, edgeArch, resultC.ExitNode, resultA.EntryNode, length: 10f, capacity: 50);
+        // A.Exits → B.Entry (direct — exit lanes are plain nodes, PacketTraverseSystem forwards them)
+        Entity eAtoB = Entity.Null;
+        foreach (var exit in resultA.ExitNodes)
+        {
+            var e = MakeEdge(em, edgeArch, exit, resultB.EntryNode, 5f, 50);
+            if (eAtoB == Entity.Null) eAtoB = e;
+        }
 
-        // Round-robin across all lane combinations through A, B, and C.
-        int pathsA = Mathf.Max(1, resultA.Paths.Count);
-        int pathsB = Mathf.Max(1, resultB.Paths.Count);
-        int pathsC = Mathf.Max(1, resultC.Paths.Count);
-        int totalVariants = pathsA * pathsB * pathsC;
+        // B.Exits → C.Entry
+        foreach (var exit in resultB.ExitNodes)
+            MakeEdge(em, edgeArch, exit, resultC.EntryNode, 5f, 15);
 
+        // C.Exits → A.Entry
+        foreach (var exit in resultC.ExitNodes)
+            MakeEdge(em, edgeArch, exit, resultA.EntryNode, 5f, 50);
+
+        // Packets start on the first A→B edge
         for (int i = 0; i < packetCount; i++)
         {
-            int variant = i % totalVariants;
-            int laneB   = variant % pathsB;
-            int laneC   = variant / pathsB % pathsC;
-            int laneA   = variant / (pathsB * pathsC) % pathsA;
-
             Entity p = em.CreateEntity(packetArch);
             em.SetComponentData(p, new Packet
             {
-                CurrentEdge = edgeAB,
-                PathIndex   = 0,
-                Progress    = UnityEngine.Random.Range(0f, 10f),
+                CurrentEdge = eAtoB,
+                Progress    = UnityEngine.Random.Range(0f, 5f),
                 Speed       = 2f
             });
-
-            // Route is the full cycle: A→B (global) → through B → B→C (global)
-            // → through C → C→A (global) → through A → wraps back to A→B.
-            var route = em.AddBuffer<PacketRoute>(p);
-            route.Add(new PacketRoute { Edge = edgeAB });
-            foreach (var edge in resultB.Paths[laneB])
-                route.Add(new PacketRoute { Edge = edge });
-            route.Add(new PacketRoute { Edge = edgeBC });
-            foreach (var edge in resultC.Paths[laneC])
-                route.Add(new PacketRoute { Edge = edge });
-            route.Add(new PacketRoute { Edge = edgeCA });
-            foreach (var edge in resultA.Paths[laneA])
-                route.Add(new PacketRoute { Edge = edge });
+            em.SetComponentData(p, new PacketDestination { Node = resultB.Node });
         }
     }
 
@@ -82,19 +66,19 @@ public class LoomBootstrap : MonoBehaviour
     // Recursive spawner
     // -------------------------------------------------------------------------
 
-    // Returned by SpawnNode — gives the bootstrap enough information to wire
-    // global edges and build flat packet routes through any node's internals.
     class SpawnResult
     {
-        public Entity       Node;       // root entity of this spawn
-        public Entity       EntryNode;  // global edges wire TO here
-        public Entity       ExitNode;   // global edges wire FROM here
-        public List<Entity[]> Paths;    // all distinct edge sequences from entry to exit
+        public Entity   Node;
+        public Entity   EntryNode;
+        public Entity[] ExitNodes;
+        public bool     IsMechanism;
     }
 
     SpawnResult SpawnNode(
         EntityManager em,
-        EntityArchetype topArch, EntityArchetype childArch, EntityArchetype edgeArch,
+        EntityArchetype topArch, EntityArchetype childArch,
+        EntityArchetype internalMechArch,
+        EntityArchetype edgeArch,
         NodeTypeDefinition def, float3 position, Entity parent, int id = -1)
     {
         bool isTopLevel = parent == Entity.Null;
@@ -107,127 +91,101 @@ public class LoomBootstrap : MonoBehaviour
         else
             em.SetComponentData(node, new NodeParent { Parent = parent });
 
-        // Leaf node — no children; returns itself as entry and exit with one empty path.
         if (def.children == null || def.children.Length == 0)
-        {
-            return new SpawnResult
-            {
-                Node      = node,
-                EntryNode = node,
-                ExitNode  = node,
-                Paths     = new List<Entity[]> { new Entity[0] }
-            };
-        }
+            return new SpawnResult { Node = node, EntryNode = node, ExitNodes = new Entity[] { node } };
 
-        // Container node — spawn each child group and wire them together.
         int numGroups = def.children.Length;
         const float groupSpacing = 1.5f;
         const float nodeSpacing  = 0.8f;
         float totalHeight = (numGroups - 1) * groupSpacing;
 
-        // groups[g] = spawned results for all nodes in children[g]
         var groups = new List<List<SpawnResult>>(numGroups);
 
         for (int g = 0; g < numGroups; g++)
         {
             var childEntry = def.children[g];
-            if (childEntry?.definition == null)
-            {
-                Debug.LogWarning($"[LoomBootstrap] '{def.typeName}' children[{g}] has no definition — skipping.");
-                groups.Add(new List<SpawnResult>());
-                continue;
-            }
+            int count      = Mathf.Max(1, childEntry.count);
+            float groupY   = position.y - totalHeight * 0.5f + g * groupSpacing;
+            var group      = new List<SpawnResult>(count);
 
-            int count    = Mathf.Max(1, childEntry.count);
-            float groupY = position.y - totalHeight * 0.5f + g * groupSpacing;
-
-            var group = new List<SpawnResult>(count);
             for (int i = 0; i < count; i++)
             {
-                float childX = position.x + (i - (count - 1) * 0.5f) * nodeSpacing;
-                group.Add(SpawnNode(em, topArch, childArch, edgeArch,
-                    childEntry.definition, new float3(childX, groupY, position.z), node));
+                float childX   = position.x + (i - (count - 1) * 0.5f) * nodeSpacing;
+                var   childPos = new float3(childX, groupY, position.z);
+
+                if (childEntry.childType == ChildType.Mechanism)
+                {
+                    Entity mech = em.CreateEntity(internalMechArch);
+                    em.SetComponentData(mech, new NodeTransform { Position = childPos });
+                    em.SetComponentData(mech, new MechanismType { Kind = childEntry.mechanismKind });
+                    em.SetComponentData(mech, new NodeParent { Parent = node });
+                    group.Add(new SpawnResult
+                    {
+                        Node        = mech,
+                        EntryNode   = mech,
+                        ExitNodes   = new Entity[] { mech },
+                        IsMechanism = true
+                    });
+                }
+                else
+                {
+                    if (childEntry.definition == null)
+                    {
+                        Debug.LogWarning($"[LoomBootstrap] '{def.typeName}' children[{g}] has no definition — skipping.");
+                        continue;
+                    }
+                    group.Add(SpawnNode(em, topArch, childArch, internalMechArch, edgeArch,
+                        childEntry.definition, childPos, node));
+                }
             }
+
             groups.Add(group);
         }
 
-        // Wire adjacent groups: every node in group[g] connects to every node in group[g+1].
-        // Edge length = children[g].definition.internalPathLength
-        // Edge capacity = children[g].definition.edgeCapacity
-        var boundaries = new List<List<(Entity Edge, int Src, int Dst)>>(numGroups - 1);
-
+        // Wire adjacent groups.
+        // Mechanism sources: add all outbound edges to their MechanismConnections.
+        // Node sources: edges are found by PacketTraverseSystem's outbound lookup.
         for (int g = 0; g < numGroups - 1; g++)
         {
-            var src    = groups[g];
-            var dst    = groups[g + 1];
-            var srcDef = def.children[g].definition;
+            var src      = groups[g];
+            var dst      = groups[g + 1];
+            var srcEntry = def.children[g];
 
-            var boundary = new List<(Entity, int, int)>(src.Count * dst.Count);
+            float edgeLen = srcEntry.childType == ChildType.Node
+                ? srcEntry.definition.internalPathLength
+                : srcEntry.outEdgeLength;
+            int edgeCap = srcEntry.childType == ChildType.Node
+                ? srcEntry.definition.edgeCapacity
+                : srcEntry.outEdgeCapacity;
+
             for (int s = 0; s < src.Count; s++)
             {
                 for (int d = 0; d < dst.Count; d++)
                 {
-                    Entity e = MakeEdge(em, edgeArch,
-                        src[s].ExitNode, dst[d].EntryNode,
-                        srcDef.internalPathLength, srcDef.edgeCapacity);
-                    boundary.Add((e, s, d));
+                    foreach (Entity srcExit in src[s].ExitNodes)
+                    {
+                        Entity e = MakeEdge(em, edgeArch, srcExit, dst[d].EntryNode, edgeLen, edgeCap);
+                        if (src[s].IsMechanism)
+                            em.GetBuffer<MechanismConnections>(src[s].Node)
+                              .Add(new MechanismConnections { Edge = e });
+                    }
                 }
             }
-            boundaries.Add(boundary);
         }
 
-        // Enumerate all traversal paths from the first group to the last.
-        var paths = new List<Entity[]>();
-        for (int i = 0; i < groups[0].Count; i++)
-            EnumeratePaths(groups, boundaries, groupIdx: 0, nodeIdx: i, new List<Entity>(), paths);
+        // Gather all exit entities from the last group
+        var lastGroup = groups[numGroups - 1];
+        var exitNodes = new List<Entity>(lastGroup.Count);
+        foreach (var r in lastGroup)
+            foreach (var e in r.ExitNodes)
+                exitNodes.Add(e);
 
         return new SpawnResult
         {
             Node      = node,
             EntryNode = groups[0].Count > 0 ? groups[0][0].EntryNode : node,
-            ExitNode  = groups[numGroups - 1].Count > 0 ? groups[numGroups - 1][0].ExitNode : node,
-            Paths     = paths.Count > 0 ? paths : new List<Entity[]> { new Entity[0] }
+            ExitNodes = exitNodes.Count > 0 ? exitNodes.ToArray() : new Entity[] { node },
         };
-    }
-
-    // DFS through the group graph — appends one complete edge sequence per unique path.
-    void EnumeratePaths(
-        List<List<SpawnResult>> groups,
-        List<List<(Entity Edge, int Src, int Dst)>> boundaries,
-        int groupIdx, int nodeIdx,
-        List<Entity> current,
-        List<Entity[]> result)
-    {
-        var nodeResult = groups[groupIdx][nodeIdx];
-
-        if (groupIdx == groups.Count - 1)
-        {
-            // Reached the last group — combine current prefix with each sub-path of this node.
-            foreach (var sub in nodeResult.Paths)
-            {
-                var full = new Entity[current.Count + sub.Length];
-                current.CopyTo(full, 0);
-                sub.CopyTo(full, current.Count);
-                result.Add(full);
-            }
-            return;
-        }
-
-        var boundary = boundaries[groupIdx];
-        foreach (var (edge, src, dst) in boundary)
-        {
-            if (src != nodeIdx) continue;
-
-            foreach (var sub in nodeResult.Paths)
-            {
-                // Build: current edges + this node's sub-path + connecting edge, then recurse.
-                var next = new List<Entity>(current.Count + sub.Length + 1);
-                next.AddRange(current);
-                next.AddRange(sub);
-                next.Add(edge);
-                EnumeratePaths(groups, boundaries, groupIdx + 1, dst, next, result);
-            }
-        }
     }
 
     // -------------------------------------------------------------------------

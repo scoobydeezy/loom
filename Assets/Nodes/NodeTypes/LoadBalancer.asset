@@ -14,14 +14,19 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::NodeTypeDefinition
   typeName: LoadBalancer
   children:
-  - definition: {fileID: 11400000, guid: 25bb950c055755f4eac47d266ef56cba, type: 2}
+  - childType: 1
+    definition: {fileID: 0}
+    mechanismKind: 0
     count: 1
-    role: intake
-  - definition: {fileID: 11400000, guid: e9ede9398a3fb6e42a0b5bed7f8a9d24, type: 2}
-    count: 1
-    role: processing
-  - definition: {fileID: 11400000, guid: 5be84dcb5a706a04b81ac16430c6469f, type: 2}
+    outEdgeLength: 0.1
+    outEdgeCapacity: 50
+    role: distributor
+  - childType: 0
+    definition: {fileID: 11400000, guid: e9ede9398a3fb6e42a0b5bed7f8a9d24, type: 2}
+    mechanismKind: 0
     count: 8
-    role: egress
+    outEdgeLength: 0.1
+    outEdgeCapacity: 50
+    role: backends
   edgeCapacity: 1
   internalPathLength: 0.1
