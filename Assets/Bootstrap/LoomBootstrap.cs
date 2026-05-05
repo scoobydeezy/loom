@@ -20,7 +20,7 @@ public class LoomBootstrap : MonoBehaviour
         var childArch        = em.CreateArchetype(typeof(Node), typeof(NodeTransform), typeof(NodeParent));
         var internalMechArch = em.CreateArchetype(typeof(Mechanism), typeof(MechanismType), typeof(NodeTransform), typeof(MechanismConnections), typeof(NodeParent));
         var edgeArch         = em.CreateArchetype(typeof(Edge));
-        var packetArch       = em.CreateArchetype(typeof(Packet), typeof(PacketDestination));
+        var packetArch       = em.CreateArchetype(typeof(Packet), typeof(PacketDestination), typeof(PacketSlot));
 
         if (nodeAType == null || nodeBType == null || nodeCType == null)
         {

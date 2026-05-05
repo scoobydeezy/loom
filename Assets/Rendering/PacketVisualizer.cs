@@ -21,6 +21,17 @@ public class PacketVisualizer : MonoBehaviour
     {
         var packets = packetQuery.ToEntityArray(Unity.Collections.Allocator.Temp);
 
+        // Detect destroyed packets and clean up their visuals
+        var toRemove = new List<Entity>();
+        foreach (var known in visuals.Keys)
+            if (!entityManager.Exists(known))
+                toRemove.Add(known);
+        foreach (var gone in toRemove)
+        {
+            Destroy(visuals[gone]);
+            visuals.Remove(gone);
+        }
+
         foreach (var entity in packets)
         {
             if (!visuals.ContainsKey(entity))
@@ -28,12 +39,10 @@ public class PacketVisualizer : MonoBehaviour
 
             var packet  = entityManager.GetComponentData<Packet>(entity);
             var edge    = entityManager.GetComponentData<Edge>(packet.CurrentEdge);
-            float t     = packet.Progress / edge.Length;
-
             var fromPos = (Vector3)entityManager.GetComponentData<NodeTransform>(edge.FromNode).Position;
             var toPos   = (Vector3)entityManager.GetComponentData<NodeTransform>(edge.ToNode).Position;
 
-            visuals[entity].transform.position = Vector3.Lerp(fromPos, toPos, t);
+            visuals[entity].transform.position = Vector3.Lerp(fromPos, toPos, packet.Progress / edge.Length);
         }
 
         packets.Dispose();
