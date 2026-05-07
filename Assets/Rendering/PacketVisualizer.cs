@@ -42,7 +42,26 @@ public class PacketVisualizer : MonoBehaviour
             var fromPos = (Vector3)entityManager.GetComponentData<NodeTransform>(edge.FromNode).Position;
             var toPos   = (Vector3)entityManager.GetComponentData<NodeTransform>(edge.ToNode).Position;
 
-            visuals[entity].transform.position = Vector3.Lerp(fromPos, toPos, packet.Progress / edge.Length);
+            // Temporary diagnostic
+            if (float.IsNaN(fromPos.x) || float.IsNaN(toPos.x))
+            {
+                Debug.LogError($"[PacketVisualizer] NaN position — edge {packet.CurrentEdge.Index} " +
+                    $"from {edge.FromNode.Index} pos={fromPos} to {edge.ToNode.Index} pos={toPos}");
+                continue;
+            }
+
+            // Handle zero-length edges (mechanisms: instantaneous transit)
+            Vector3 packetPos;
+            if (edge.Length <= 0.0001f)
+            {
+                packetPos = toPos;
+            }
+            else
+            {
+                packetPos = Vector3.Lerp(fromPos, toPos, packet.Progress / edge.Length);
+            }
+
+            visuals[entity].transform.position = packetPos;
         }
 
         packets.Dispose();

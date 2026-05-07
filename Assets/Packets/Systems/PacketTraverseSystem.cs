@@ -2,11 +2,14 @@ using Unity.Entities;
 using Unity.Collections;
 using Unity.Mathematics;
 
+[UpdateInGroup(typeof(SimulationSystemGroup))]
+[UpdateAfter(typeof(EdgeProgressCacheSystem))]
 public partial struct PacketTraverseSystem : ISystem
 {
-    // Minimum following distance. A packet stops when it would get closer than this to the
-    // packet immediately ahead on the same edge. Must match PacketVisualizer.BeadDiameter.
-    public const float BeadDiameter = 0.15f;
+    // Entry-spacing constant: a new packet can enter an edge only when the nearest existing
+    // packet has cleared at least this distance from the entry point. Controls throughput.
+    // Must match the visual bead scale used in PacketVisualizer.
+    public const float BeadDiameter = 0.2f;
 
     EntityQuery _edgeQuery;
 
@@ -45,14 +48,7 @@ public partial struct PacketTraverseSystem : ISystem
         }
         edgeEntities.Dispose();
 
-        // Per-edge progress snapshot for this frame's collision checks.
-        // WaitingAtNode packets are included: they are physically stopped at edge.Length
-        // and must block packets approaching from behind on the same edge.
-        // AwaitingRouting packets are excluded: they have been consumed by a mechanism
-        // and no longer occupy space on the edge.
-        var edgeProgressMap = new NativeParallelMultiHashMap<Entity, float>(512, Allocator.Temp);
-        foreach (var packet in SystemAPI.Query<RefRO<Packet>>().WithNone<AwaitingRouting>())
-            edgeProgressMap.Add(packet.ValueRO.CurrentEdge, packet.ValueRO.Progress);
+        var edgeProgressMap = SystemAPI.GetSingleton<EdgeProgressCache>().Map;
 
         // Pass 1 — move packets along edges and handle arrival at nodes/mechanisms
         foreach (var (packet, entity) in SystemAPI
@@ -64,9 +60,8 @@ public partial struct PacketTraverseSystem : ISystem
             var p    = packet.ValueRW;
             var edge = em.GetComponentData<Edge>(p.CurrentEdge);
 
-            // Advance up to BeadDiameter behind the nearest packet ahead on this edge.
             float desiredProgress = p.Progress + p.Speed * dt;
-            float minAhead        = MinProgressGreaterThan(edgeProgressMap, p.CurrentEdge, p.Progress);
+            float minAhead        = EdgeProgressUtil.MinProgressGreaterThan(edgeProgressMap, p.CurrentEdge, p.Progress);
             float maxAllowed      = minAhead - BeadDiameter;
             p.Progress = math.max(p.Progress, math.min(desiredProgress, maxAllowed));
 
@@ -76,11 +71,7 @@ public partial struct PacketTraverseSystem : ISystem
                 continue;
             }
 
-            // Edge complete — release occupancy
-            edge.Occupancy--;
-            em.SetComponentData(p.CurrentEdge, edge);
             p.Progress = edge.Length;
-
             Entity atNode = edge.ToNode;
 
             // Mechanism: hand off routing to MechanismSystem
@@ -92,13 +83,12 @@ public partial struct PacketTraverseSystem : ISystem
             }
 
             // Plain node: forward onto the single outbound edge if physically unblocked
-            bool forwarded = TryForward(em, outboundEdge, outboundCount, edgeProgressMap, atNode, ref p);
+            bool forwarded = TryForward(outboundEdge, outboundCount, edgeProgressMap, atNode, ref p);
             packet.ValueRW = p;
 
             if (!forwarded)
             {
-                // Packet has left the inbound edge (occupancy already decremented).
-                // Do not restore occupancy — stamp WaitingAtNode and retry next frame.
+                // Packet has left the inbound edge. Stamp WaitingAtNode and retry next frame.
                 ecb.AddComponent<WaitingAtNode>(entity);
             }
         }
@@ -113,23 +103,21 @@ public partial struct PacketTraverseSystem : ISystem
             var edge  = em.GetComponentData<Edge>(p.CurrentEdge);
             Entity atNode = edge.ToNode;
 
-            if (TryForward(em, outboundEdge, outboundCount, edgeProgressMap, atNode, ref p))
+            if (TryForward(outboundEdge, outboundCount, edgeProgressMap, atNode, ref p))
             {
                 packet.ValueRW = p;
                 ecb.RemoveComponent<WaitingAtNode>(entity);
             }
-            // Otherwise leave WaitingAtNode — retry next frame, no occupancy changes
+            // Otherwise leave WaitingAtNode — retry next frame
         }
 
         outboundEdge.Dispose();
         outboundCount.Dispose();
-        edgeProgressMap.Dispose();
         ecb.Playback(em);
         ecb.Dispose();
     }
 
     static bool TryForward(
-        EntityManager em,
         NativeHashMap<Entity, Entity> outboundEdge,
         NativeHashMap<Entity, int>    outboundCount,
         NativeParallelMultiHashMap<Entity, float> edgeProgressMap,
@@ -141,43 +129,11 @@ public partial struct PacketTraverseSystem : ISystem
         if (!outboundEdge.TryGetValue(atNode, out Entity nextEntity))
             return false;
 
-        // Physical entry check: blocked if a stopped packet is already within BeadDiameter
-        // of the edge start. This replaces the old Occupancy >= Capacity hard gate.
-        float minProg = MinProgressOnEdge(edgeProgressMap, nextEntity);
-        if (minProg < BeadDiameter)
+        if (EdgeProgressUtil.MinProgressOnEdge(edgeProgressMap, nextEntity) < BeadDiameter)
             return false;
 
-        var nextEdge = em.GetComponentData<Edge>(nextEntity);
-        nextEdge.Occupancy++;
-        em.SetComponentData(nextEntity, nextEdge);
         p.CurrentEdge = nextEntity;
         p.Progress    = 0f;
         return true;
-    }
-
-    // Smallest progress value on the edge that is strictly greater than minExclusive.
-    // Returns float.MaxValue when no packet is ahead (edge is clear).
-    static float MinProgressGreaterThan(
-        NativeParallelMultiHashMap<Entity, float> map, Entity edge, float minExclusive)
-    {
-        float min = float.MaxValue;
-        if (map.TryGetFirstValue(edge, out float val, out var it))
-        {
-            do { if (val > minExclusive && val < min) min = val; }
-            while (map.TryGetNextValue(out val, ref it));
-        }
-        return min;
-    }
-
-    // Smallest progress value of any packet on the edge. Returns float.MaxValue when empty.
-    static float MinProgressOnEdge(NativeParallelMultiHashMap<Entity, float> map, Entity edge)
-    {
-        float min = float.MaxValue;
-        if (map.TryGetFirstValue(edge, out float val, out var it))
-        {
-            do { if (val < min) min = val; }
-            while (map.TryGetNextValue(out val, ref it));
-        }
-        return min;
     }
 }

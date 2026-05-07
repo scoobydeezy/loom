@@ -3,17 +3,39 @@ using Unity.Entities;
 using Unity.Mathematics;
 using System.Collections.Generic;
 
-public class LoomBootstrap : MonoBehaviour
+/// <summary>
+/// Inspector-driven test scaffold. Spawns a looping chain of nodes —
+/// N0 → N1 → ... → Nn → N0 — so packets circulate indefinitely.
+/// Edge lengths are derived from world-space node positions automatically.
+/// </summary>
+public class ScenarioBootstrap : MonoBehaviour
 {
-    public int packetCount = 1000;
+    [Header("Nodes")]
+    public NodeTypeDefinition[] nodeTypes;
 
-    [Header("Node Type Assignments")]
-    public NodeTypeDefinition nodeAType;
-    public NodeTypeDefinition nodeBType;
-    public NodeTypeDefinition nodeCType;
+    [Header("Packets")]
+    public int   packetCount = 100;
+    public float packetSpeed = 2f;
+
+    const float CircleRadius = 6f;
 
     void Start()
     {
+        if (nodeTypes == null || nodeTypes.Length < 2)
+        {
+            Debug.LogError("[ScenarioBootstrap] Assign at least two node types.");
+            return;
+        }
+
+        for (int i = 0; i < nodeTypes.Length; i++)
+        {
+            if (nodeTypes[i] == null)
+            {
+                Debug.LogError($"[ScenarioBootstrap] nodeTypes[{i}] is null.");
+                return;
+            }
+        }
+
         var em = World.DefaultGameObjectInjectionWorld.EntityManager;
 
         var topArch          = em.CreateArchetype(typeof(Node), typeof(NodeType), typeof(NodeTransform));
@@ -22,49 +44,74 @@ public class LoomBootstrap : MonoBehaviour
         var edgeArch         = em.CreateArchetype(typeof(Edge));
         var packetArch       = em.CreateArchetype(typeof(Packet), typeof(PacketDestination), typeof(PacketSlot));
 
-        if (nodeAType == null || nodeBType == null || nodeCType == null)
+        int n = nodeTypes.Length;
+        float radius = Mathf.Max(CircleRadius, n * 1.2f);
+
+        // Spawn nodes evenly around a circle
+        var results = new SpawnResult[n];
+        for (int i = 0; i < n; i++)
         {
-            Debug.LogError("[LoomBootstrap] All three NodeTypeDefinition slots must be assigned in the inspector.");
-            return;
+            float angle = i * (2f * Mathf.PI / n) - Mathf.PI * 0.5f;
+            var pos = new float3(Mathf.Cos(angle) * radius, Mathf.Sin(angle) * radius, 0f);
+            results[i] = SpawnNode(em, topArch, childArch, internalMechArch, edgeArch, nodeTypes[i], pos, Entity.Null, id: i);
         }
 
-        var resultA = SpawnNode(em, topArch, childArch, internalMechArch, edgeArch, nodeAType, new float3(-5, 0, 0), Entity.Null, id: 0);
-        var resultB = SpawnNode(em, topArch, childArch, internalMechArch, edgeArch, nodeBType, new float3( 5, 0, 0), Entity.Null, id: 1);
-        var resultC = SpawnNode(em, topArch, childArch, internalMechArch, edgeArch, nodeCType, new float3( 0, 0, 6), Entity.Null, id: 2);
-
-        // A.Exits → B.Entry (direct — exit lanes are plain nodes, PacketTraverseSystem forwards them)
-        Entity eAtoB = Entity.Null;
-        foreach (var exit in resultA.ExitNodes)
+        // Wire the loop: each node's exits → next node's entry (last → first).
+        // Track the first edge of each arc so packets can be distributed around the full loop.
+        var loopArcs = new List<(Entity edge, float length)>(n);
+        for (int i = 0; i < n; i++)
         {
-            var e = MakeEdge(em, edgeArch, exit, resultB.EntryNode);
-            if (eAtoB == Entity.Null) eAtoB = e;
+            int    next     = (i + 1) % n;
+            Entity arcFirst = Entity.Null;
+
+            foreach (var exit in results[i].ExitNodes)
+            {
+                var e = MakeEdge(em, edgeArch, exit, results[next].EntryNode);
+                if (arcFirst == Entity.Null) arcFirst = e;
+            }
+            loopArcs.Add((arcFirst, em.GetComponentData<Edge>(arcFirst).Length));
         }
 
-        // B.Exits → C.Entry
-        foreach (var exit in resultB.ExitNodes)
-            MakeEdge(em, edgeArch, exit, resultC.EntryNode);
+        // Distribute packets around the full loop at guaranteed minimum spacing so that
+        // the follow-until-bumping behavior is immediately observable.
+        // Packets start touching when they catch up to one another, not at spawn time.
+        float totalLength = 0f;
+        foreach (var (_, l) in loopArcs) totalLength += l;
 
-        // C.Exits → A.Entry
-        foreach (var exit in resultC.ExitNodes)
-            MakeEdge(em, edgeArch, exit, resultA.EntryNode);
+        float minSpacing = PacketTraverseSystem.BeadDiameter * 2f;
+        int   maxFit     = Mathf.Max(1, Mathf.FloorToInt(totalLength / minSpacing));
+        int   spawnCount = Mathf.Min(packetCount, maxFit);
+        if (spawnCount < packetCount)
+            Debug.LogWarning($"[ScenarioBootstrap] Spawning {spawnCount} of {packetCount} requested packets — loop is {totalLength:F1} units; reduce packetCount or increase node spacing.");
 
-        // Packets start on the first A→B edge
-        float eatoBLength = em.GetComponentData<Edge>(eAtoB).Length;
-        for (int i = 0; i < packetCount; i++)
+        float step = totalLength / Mathf.Max(1, spawnCount);
+        int   arc  = 0;
+        float arcBase = 0f;
+
+        for (int i = 0; i < spawnCount; i++)
         {
+            float globalPos = i * step;
+
+            // Advance to the arc that contains this global position
+            while (arc < loopArcs.Count - 1 && globalPos >= arcBase + loopArcs[arc].length)
+            {
+                arcBase += loopArcs[arc].length;
+                arc++;
+            }
+
             Entity p = em.CreateEntity(packetArch);
             em.SetComponentData(p, new Packet
             {
-                CurrentEdge = eAtoB,
-                Progress    = UnityEngine.Random.Range(0f, eatoBLength),
-                Speed       = 2f
+                CurrentEdge = loopArcs[arc].edge,
+                Progress    = globalPos - arcBase,
+                Speed       = packetSpeed
             });
-            em.SetComponentData(p, new PacketDestination { Node = resultB.Node });
+            em.SetComponentData(p, new PacketDestination { Node = results[(arc + 1) % n].Node });
         }
     }
 
     // -------------------------------------------------------------------------
-    // Recursive spawner
+    // Recursive spawner (mirrors LoomBootstrap.SpawnNode exactly)
     // -------------------------------------------------------------------------
 
     class SpawnResult
@@ -132,7 +179,7 @@ public class LoomBootstrap : MonoBehaviour
                 {
                     if (childEntry.definition == null)
                     {
-                        Debug.LogWarning($"[LoomBootstrap] '{def.typeName}' children[{g}] has no definition — skipping.");
+                        Debug.LogWarning($"[ScenarioBootstrap] '{def.typeName}' children[{g}] has no definition — skipping.");
                         continue;
                     }
                     group.Add(SpawnNode(em, topArch, childArch, internalMechArch, edgeArch,
@@ -143,9 +190,6 @@ public class LoomBootstrap : MonoBehaviour
             groups.Add(group);
         }
 
-        // Wire adjacent groups.
-        // Mechanism sources: add all outbound edges to their MechanismConnections.
-        // Node sources: edges are found by PacketTraverseSystem's outbound lookup.
         for (int g = 0; g < numGroups - 1; g++)
         {
             var src      = groups[g];
@@ -162,7 +206,6 @@ public class LoomBootstrap : MonoBehaviour
             }
         }
 
-        // Gather all exit entities from the last group
         var lastGroup = groups[numGroups - 1];
         var exitNodes = new List<Entity>(lastGroup.Count);
         foreach (var r in lastGroup)

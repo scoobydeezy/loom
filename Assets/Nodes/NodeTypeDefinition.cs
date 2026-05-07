@@ -15,20 +15,13 @@ public class NodeTypeChild
     public MechanismKind      mechanismKind = MechanismKind.Route; // ChildType.Mechanism only
     public int                count         = 1;
 
-    [Tooltip("Length of outgoing edges from this child to the next group. Mechanism children only — Node children use definition.internalPathLength.")]
-    public float outEdgeLength = 0.2f;
-
-    [Tooltip("Capacity of outgoing edges from this child to the next group. Mechanism children only — Node children use definition.edgeCapacity.")]
-    public int outEdgeCapacity = 50;
-
     [Tooltip("Freeform label for human readability and future recipe matching. Not enforced by simulation.")]
     public string role;
 }
 
 /// <summary>
 /// Structural recipe describing what a node of this type looks like.
-/// Leaf nodes have an empty children array; their edgeCapacity and internalPathLength
-/// determine the edges that connect them to adjacent siblings.
+/// Leaf nodes have an empty children array.
 /// Non-leaf nodes define an internal graph through their children array.
 /// This definition is used at assembly time only — the simulation never reads it.
 /// </summary>
@@ -39,10 +32,4 @@ public class NodeTypeDefinition : ScriptableObject
 
     [Tooltip("Child entries (nodes or mechanisms) assembled into this node's internal graph. Empty = leaf node.")]
     public NodeTypeChild[] children;
-
-    [Tooltip("Capacity of outgoing edges from this node type to adjacent siblings.")]
-    public int edgeCapacity = 1;
-
-    [Tooltip("Length of outgoing edges from this node type (proxy for latency at packet speed). Leaf nodes only.")]
-    public float internalPathLength = 1f;
 }
