@@ -20,7 +20,7 @@ Loom is a real-time spatial simulator that makes distributed systems tangible. A
 This is not a stylistic preference. It is an architectural constraint that governs every decision.
 
 - Distance is the mechanism for time
-- Capacity is the mechanism for throughput limits
+- Physical density (BeadDiameter packing) is the natural throughput constraint; explicit rate limits are a RateLimit mechanism concern (Phase 4)
 - Congestion (structural crowding) is the mechanism for queuing
 - No timers, no `Invoke`, no coroutine-based delays
 - No boolean flags that represent "processing" without spatial meaning
@@ -35,7 +35,7 @@ Everything in Loom is built from four primitives. They exist for distinct reason
 | Primitive     | Role        | Why it exists                                          |
 | ------------- | ----------- | ------------------------------------------------------ |
 | **Node**      | Containment | Enforces that packets must traverse internal structure |
-| **Edge**      | Transport   | Distance = latency; capacity = throughput              |
+| **Edge**      | Transport   | Distance = latency; physical presence constrains flow  |
 | **Mechanism** | Decision    | The only place routing logic lives                     |
 | **Packet**    | Traveler    | Carries a destination; makes no decisions              |
 
@@ -129,7 +129,7 @@ There is no special "Part" type. A processing lane, a node interior, a cluster, 
 
 These behaviors are not implemented — they emerge:
 
-- **Queuing** — emerges when edge capacity is saturated
+- **Queuing** — emerges from physical packet density as packets pack to BeadDiameter contact
 - **Backpressure** — emerges from queue depth
 - **Congestion** — emerges from packet density
 - **Node type** — recognized by matching assembled structure against a recipe, never declared
@@ -173,9 +173,9 @@ These behaviors are not implemented — they emerge:
 Components are named after the concept they represent — not suffixed with `Data`. The component **is** the thing.
 
 ```
-Components:        Node, NodeTransform, NodeType, NodeParent, Edge, Mechanism, MechanismType, Packet, PacketDestination, WaitingAtNode, QueueState, EdgeCapacity
+Components:        Node, NodeTransform, NodeType, NodeParent, Edge, Mechanism, MechanismType, Packet, PacketDestination, WaitingAtNode, QueueState
 Buffers:           MechanismConnections
-Tags:              AwaitingRouting, WaitingAtNode, NodeActiveTag, EdgeSaturatedTag
+Tags:              AwaitingRouting, WaitingAtNode, NodeActiveTag
 Systems:           PacketTraverseSystem, MechanismSystem
 Aspects:           PacketAspect, NodeAspect (when grouping related component access)
 MonoBehaviours:    LoomBootstrap, PacketVisualizer, EdgeVisualizer (editor/rendering only)
@@ -197,21 +197,19 @@ Node configuration is data-driven via **ScriptableObjects**. A `NodeTypeDefiniti
 
 **NodeTypeChild fields:**
 
-| Field             | Type               | Meaning                                                         |
-| ----------------- | ------------------ | --------------------------------------------------------------- |
-| `childType`       | ChildType          | `Node` or `Mechanism`                                           |
-| `definition`      | NodeTypeDefinition | Child node recipe — used when `childType == Node`               |
-| `mechanismKind`   | MechanismKind      | Route / Filter / RateLimit — used when `childType == Mechanism` |
-| `count`           | int                | How many of this child to spawn                                 |
-| `role`            | string             | Human-readable label only — not enforced by simulation          |
-| `outEdgeLength`   | float              | Length of edges from this child to the next group               |
-| `outEdgeCapacity` | int                | Capacity of edges from this child to the next group             |
+| Field           | Type               | Meaning                                                         |
+| --------------- | ------------------ | --------------------------------------------------------------- |
+| `childType`     | ChildType          | `Node` or `Mechanism`                                           |
+| `definition`    | NodeTypeDefinition | Child node recipe — used when `childType == Node`               |
+| `mechanismKind` | MechanismKind      | Route / Filter / RateLimit — used when `childType == Mechanism` |
+| `count`         | int                | How many of this child to spawn                                 |
+| `role`          | string             | Human-readable label only — not enforced by simulation          |
 
-For `ChildType.Node` children, `outEdgeLength` and `outEdgeCapacity` are read from the child's `NodeTypeDefinition` (`internalPathLength` and `edgeCapacity`). For `ChildType.Mechanism` children, they are set directly on the `NodeTypeChild`.
+Edge length is never specified in recipes. It is always derived from the world-space distance between the spawned node positions at assembly time.
 
 ### Leaf vs. Composite Nodes
 
-- **Leaf nodes** have no children. Behavior is defined by `edgeCapacity` and `internalPathLength`.
+- **Leaf nodes** have no children. Their behavior emerges from their position relative to siblings — edge lengths are physical distance, packing density is structural.
 - **Composite nodes** have children. Behavior emerges from the graph those children form.
 
 ### Built-in Node Type Assets
@@ -220,7 +218,7 @@ For `ChildType.Node` children, `outEdgeLength` and `outEdgeCapacity` are read fr
 
 | Asset            | Type      | Recipe                        | Notes                                   |
 | ---------------- | --------- | ----------------------------- | --------------------------------------- |
-| `ProcessingLane` | Leaf      | —                             | edgeCapacity: 1, pathLength: 3.0        |
+| `ProcessingLane` | Leaf      | —                             | Single-packet lane; length from position |
 | `WebServer`      | Composite | Route x1 → ProcessingLane x16 | Distributes across 16 independent lanes |
 | `Database`       | Composite | Route x1 → ProcessingLane x4  | Distributes across 4 independent lanes  |
 | `LoadBalancer`   | Composite | Route x1 → ProcessingLane x8  | Distributes across 8 independent lanes  |
@@ -230,7 +228,7 @@ For `ChildType.Node` children, `outEdgeLength` and `outEdgeCapacity` are read fr
 
 | Asset            | Type      | Recipe                                    | Notes                                          |
 | ---------------- | --------- | ----------------------------------------- | ---------------------------------------------- |
-| `QueueHolding`   | Leaf      | —                                         | edgeCapacity: 100, pathLength: 0.1; buffer node where packets visibly accumulate |
+| `QueueHolding`   | Leaf      | —                                         | High-density buffer node; packets visibly accumulate through physical packing    |
 | `Queue`          | Composite | Filter x1 → QueueHolding x1 → Route x1   | **Phase 1 structural scaffolding.** Enforces admission control (Filter), materializes buffering (QueueHolding), distributes (Route). Drop logic is Phase 4; currently passes packets through. |
 
 **Physical Pattern Library** — Nodes that make latent distributed-systems behavior visible as observable structure.
@@ -259,7 +257,8 @@ Files are grouped by **domain**, not by type.
 ```
 Assets/
 ├── Bootstrap/
-│   └── LoomBootstrap.cs              # World init, recursive node spawner
+│   ├── LoomBootstrap.cs              # World init, recursive node spawner
+│   └── ScenarioBootstrap.cs          # Inspector-driven looping test scaffold
 ├── Packets/
 │   ├── Components/
 │   │   ├── Packet.cs                 # CurrentEdge, Progress, Speed
@@ -274,16 +273,16 @@ Assets/
 │   │   └── NodeParent.cs             # Marks a node as belonging to another node's internal graph
 │   └── NodeTypes/
 │       ├── NodeTypeDefinition.cs     # Recipe class — ChildType enum, NodeTypeChild struct
-│       ├── ProcessingLane.asset      # Leaf — edgeCapacity:1, pathLength:3.0
+│       ├── ProcessingLane.asset      # Leaf — single-packet lane
 │       ├── WebServer.asset           # Route x1 → ProcessingLane x16
 │       ├── Database.asset            # Route x1 → ProcessingLane x4
 │       ├── LoadBalancer.asset        # Route x1 → ProcessingLane x8
 │       ├── Cache.asset               # ProcessingLane x1
-│       ├── QueueHolding.asset        # Leaf buffer node — edgeCapacity:100, pathLength:0.1
+│       ├── QueueHolding.asset        # Leaf — high-density buffer node
 │       └── Queue.asset               # Filter x1 → QueueHolding x1 → Route x1
 ├── Edges/
 │   └── Components/
-│       └── Edge.cs                   # FromNode, ToNode, Length, Capacity, Occupancy
+│       └── Edge.cs                   # FromNode, ToNode, Length (derived from node positions)
 ├── Mechanisms/
 │   ├── Components/
 │   │   ├── Mechanism.cs              # Marker tag
@@ -322,7 +321,7 @@ Do not work around these — implement them when their milestone arrives.
 | `yield return new WaitForSeconds(latency)`     | Hidden timer, not spatial                     | Make the edge longer                                               |
 | `packetState = Processing; timer -= dt;`       | Abstract state machine                        | Route packet through internal node graph                           |
 | Lerp with a fixed duration                     | Duration is a timer                           | Lerp with a fixed speed; distance determines time                  |
-| `if (isProcessing) skip` flags                 | Invisible logic                               | Capacity constraint on the edge                                    |
+| `if (isProcessing) skip` flags                 | Invisible logic                               | BeadDiameter packing naturally constrains flow; RateLimit mechanism gates admission in Phase 4 |
 | Separate "queue list" data structure           | Logic-based queue                             | Packets physically waiting at edge entry                           |
 | `Part` component or slot-type enums            | Redundant abstraction                         | Nodes are nodes at every level of nesting                          |
 | Declaring node type at spawn time              | Type is recognized, not declared              | Recipe matcher reads structure, surfaces label                     |
@@ -333,11 +332,12 @@ Do not work around these — implement them when their milestone arrives.
 | Dedicated Intake / Egress node types           | Redundant — entry/exit are structural         | First child is entry, last group is exit                           |
 | Plain node with multiple outbound edges        | Misconfiguration — nothing selects            | Add a Route mechanism before the fan-out                           |
 | `EnsureWebServer` / validator methods          | Hardcodes recipes in C#                       | Recipes are data assets — no C# guardian needed                    |
-| Restoring occupancy on failed forward          | Causes thrashing every frame                  | Stamp `WaitingAtNode`, retry next frame                            |
 | Collector mechanism at end of recipe           | Bottleneck — collapses parallel lanes         | End recipe with ProcessingLane — lanes exit independently          |
 | Inter-node mechanism as global waypoint        | Creates false spatial convergence             | Wire exit lanes directly to destination entry node                 |
 | Adding inbound edges to `MechanismConnections` | Causes packet to loop back onto inbound edge  | Connections are outbound-only — inbound edges need no registration |
 | Stacking multiple policies on one mechanism    | Hides complexity, breaks observability        | Chain two mechanism entities with an edge between them             |
+| Supplying a manual length to `MakeEdge`        | Length is physical, not a design parameter    | `MakeEdge` derives length from `math.distance(fromPos, toPos)`     |
+| Adding `Capacity` or `Occupancy` to `Edge`     | Edges are passive geometry — no opinions      | Throughput limiting is a RateLimit mechanism (Phase 4)             |
 | "Node is just a visual grouping"               | Nodes enforce traversal — they are not chrome | Node is a containment boundary with simulation weight              |
 
 ---
@@ -361,7 +361,7 @@ This roadmap describes intended scope per phase. It is not a task tracker.
 
 **Goal:** A working physics engine for distributed systems. Prove the spatial metaphor holds.
 
-**Capabilities:** Place and remove nodes freely in 2D space. Connect nodes with edges; configure edge length and capacity. Observe live packet flow, congestion, and routing in real time. Pause, step, and resume the simulation. Adjust capacity and speed mid-simulation. Internal node physics: packets traverse a subgraph inside each node, producing emergent compute time and queue formation.
+**Capabilities:** Place and remove nodes freely in 2D space. Connect nodes with edges; edge length derives from node positions. Observe live packet flow, congestion, and routing in real time. Pause, step, and resume the simulation. Adjust speed mid-simulation. Internal node physics: packets traverse a subgraph inside each node, producing emergent compute time and queue formation.
 
 **Definition of done:** A user with no context can open Loom, build a triangle topology, and observe congestion without reading any documentation.
 

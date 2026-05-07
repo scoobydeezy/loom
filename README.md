@@ -14,7 +14,7 @@ numbers or timers — they are **visible motion through constrained geometry**, 
 **Everything in Loom must be explainable as movement through constrained geometry.**
 
 - Distance is time
-- Capacity is throughput
+- Physical density (bead packing) is natural throughput; explicit rate limits are a mechanism concern
 - Congestion is queuing
 - Structure creates behavior
 - No timers, no hidden delays, no abstract “processing” states
@@ -31,7 +31,7 @@ and must not be conflated.
 | Primitive     | Role        | Why it exists                                    |
 | ------------- | ----------- | ------------------------------------------------ |
 | **Node**      | Containment | Forces packets to traverse internal structure    |
-| **Edge**      | Transport   | Distance = latency, capacity = throughput        |
+| **Edge**      | Transport   | Distance = latency; physical presence constrains flow |
 | **Mechanism** | Decision    | The only place routing or filtering logic lives  |
 | **Packet**    | Traveler    | Moves, carries a destination, makes no decisions |
 
@@ -65,13 +65,13 @@ This dual truth is the core insight of Loom.
 
 Nothing is scripted.
 
-| Behavior     | Emerges from                                 |
-| ------------ | -------------------------------------------- |
-| Queuing      | Edge capacity limits                         |
-| Backpressure | Packets waiting at saturated edges           |
-| Compute time | Distance traveled inside a node              |
-| Routing      | Mechanisms selecting outbound edges          |
-| Node “type”  | Recognized from internal structure (recipes) |
+| Behavior     | Emerges from                                      |
+| ------------ | ------------------------------------------------- |
+| Queuing      | Physical packet density — BeadDiameter packing    |
+| Backpressure | Packets waiting at blocked edge entries           |
+| Compute time | Distance traveled inside a node                   |
+| Routing      | Mechanisms selecting outbound edges               |
+| Node “type”  | Recognized from internal structure (recipes)      |
 
 Nodes are places.  
 Packets are dumb.  
@@ -120,13 +120,15 @@ They never enter the ECS world.
 
 Examples:
 
-| Asset          | Recipe                           |
-| -------------- | -------------------------------- |
-| ProcessingLane | Leaf node (capacity 1, path 3.0) |
-| WebServer      | Route ×1 → ProcessingLane ×16    |
-| Database       | Route ×1 → ProcessingLane ×4     |
-| LoadBalancer   | Route ×1 → ProcessingLane ×8     |
-| Cache          | ProcessingLane ×1                |
+| Asset          | Recipe                         |
+| -------------- | ------------------------------ |
+| ProcessingLane | Leaf node                      |
+| WebServer      | Route ×1 → ProcessingLane ×16  |
+| Database       | Route ×1 → ProcessingLane ×4   |
+| LoadBalancer   | Route ×1 → ProcessingLane ×8   |
+| Cache          | ProcessingLane ×1              |
+| QueueHolding   | Leaf node (high-density buffer)|
+| Queue          | Filter ×1 → QueueHolding ×1 → Route ×1 |
 
 All lanes exit independently. No collector mechanism.
 
@@ -160,7 +162,7 @@ Loom currently supports:
 - Mechanism-based routing
 - Recursive node construction from recipes
 - Internal node graphs producing real compute time
-- Capacity-based congestion and backpressure
+- Density-based congestion and backpressure (BeadDiameter packing)
 - Edge and packet visualization driven directly from ECS state
 
 A triangle of mixed node types can run indefinitely with observable congestion,
