@@ -28,12 +28,12 @@ If it cannot be seen in the scene, it does not exist in the simulation.
 Everything in Loom is built from four primitives. They exist for different reasons
 and must not be conflated.
 
-| Primitive     | Role        | Why it exists                                    |
-| ------------- | ----------- | ------------------------------------------------ |
-| **Node**      | Containment | Forces packets to traverse internal structure    |
-| **Edge**      | Transport   | Distance = latency; physical presence constrains flow |
-| **Mechanism** | Decision    | The only place routing or filtering logic lives  |
-| **Packet**    | Traveler    | Moves, carries a destination, makes no decisions |
+| Primitive     | Role        | Why it exists                                                          |
+| ------------- | ----------- | ---------------------------------------------------------------------- |
+| **Node**      | Containment | Forces packets to traverse internal structure                          |
+| **Edge**      | Transport   | Distance = latency. No capacity — throughput is a mechanism concern.   |
+| **Mechanism** | Decision    | The only place routing or filtering logic lives                        |
+| **Packet**    | Traveler    | Moves, carries a destination, makes no decisions                       |
 
 ---
 
@@ -65,13 +65,15 @@ This dual truth is the core insight of Loom.
 
 Nothing is scripted.
 
-| Behavior     | Emerges from                                      |
-| ------------ | ------------------------------------------------- |
-| Queuing      | Physical packet density — BeadDiameter packing    |
-| Backpressure | Packets waiting at blocked edge entries           |
-| Compute time | Distance traveled inside a node                   |
-| Routing      | Mechanisms selecting outbound edges               |
-| Node “type”  | Recognized from internal structure (recipes)      |
+| Behavior     | Emerges from                                              |
+| ------------ | --------------------------------------------------------- |
+| Queuing      | Physical packet density — BeadDiameter packing            |
+| Backpressure | Packets waiting at blocked edge entries                   |
+| Compute time | Distance traveled inside a node                           |
+| Routing      | Mechanisms selecting outbound edges                       |
+| Node “type”  | Recognized from internal structure (recipes)              |
+| Capacity     | Mechanisms guarding edge entry, not edge properties       |
+| Packet drop  | Queue exhaustion — physical space runs out (Phase 4)      |
 
 Nodes are places.  
 Packets are dumb.  

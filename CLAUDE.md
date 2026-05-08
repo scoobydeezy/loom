@@ -135,6 +135,10 @@ These behaviors are not implemented — they emerge:
 - **Node type** — recognized by matching assembled structure against a recipe, never declared
 - **Routing** — emerges from mechanisms reading packet destinations and edge congestion
 
+### Emergent Capacity
+
+Capacity is not a property of edges. Edges are passive geometry — they have length (latency) and physical presence (bead diameter). Throughput limiting is a decision, and decisions belong to mechanisms. A RateLimit mechanism guards entry to an edge and controls flow. An edge that appears "full" is full because beads are physically touching, not because a counter was exceeded. Dropped packets (Phase 4) occur at queue boundaries when physical space is exhausted, not when an integer limit is reached.
+
 ### System Layers (dependency order)
 
 | Layer            | Responsibility                                           |
@@ -181,6 +185,8 @@ Aspects:           PacketAspect, NodeAspect (when grouping related component acc
 MonoBehaviours:    LoomBootstrap, PacketVisualizer, EdgeVisualizer (editor/rendering only)
 ScriptableObjects: NodeTypeDefinition (recipe descriptors — never enter ECS world directly)
 ```
+
+`Edge.Length` is always derived from `math.distance(fromPos, toPos)` at edge creation — never set manually. Length reflects world-space reality; if a node moves, the edge's recorded length is stale, but the renderer reads positions live.
 
 ---
 
@@ -311,6 +317,7 @@ Do not work around these — implement them when their milestone arrives.
 - **`EntryNodes` (plural)** — `SpawnResult.EntryNode` is currently singular. Will need to become an array when merge nodes are introduced.
 - **Filter and RateLimit mechanisms** — dispatch structure is in place in `MechanismSystem`; both are stubs. Implement in Phase 4.
 - **`WaitingAtNode` / `AwaitingRouting` performance** — tag-based skipping may need to move to a dedicated waiting queue at 100k+ packets. Profile before optimizing.
+- **Dropped packet corpses** — when tail-drop is implemented in Phase 4, dropped packets spawn a visual corpse at the dropping node's position, fall to a floor plane, and persist. Floor cleanliness is the primary system health indicator.
 
 ---
 

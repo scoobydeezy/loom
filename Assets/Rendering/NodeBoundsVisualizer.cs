@@ -4,30 +4,45 @@ using System.Collections.Generic;
 
 /// <summary>
 /// Draws an axis-aligned bounding box around each composite node's children every frame.
+/// Outline color reflects internal-graph health: normal, active (packets inside),
+/// or pressured (packets inside are blocked or waiting).
 /// Reads NodeParent and NodeTransform from ECS — never caches positions.
 /// </summary>
+[DefaultExecutionOrder(400)]
 public class NodeBoundsVisualizer : MonoBehaviour
 {
-    const float Padding    = 0.4f;
-    const float LineWidth  = 0.04f;
-    static readonly Color BoundsColor = new Color(0.9f, 0.7f, 0.1f, 0.8f);
+    const float Padding   = 0.4f;
+    const float LineWidth = 0.04f;
 
-    // One LineRenderer quad (5 points, loop) per parent node
-    Dictionary<Entity, LineRenderer> boxes = new();
+    enum BoundsState { Normal, Active, Pressured }
 
-    EntityManager entityManager;
-    EntityQuery   childQuery;
+    [Header("Node Bounds Materials")]
+    public Material matNormal;
+    public Material matActive;
+    public Material matPressured;
+
+    readonly Dictionary<Entity, LineRenderer> boxes = new();
+
+    EntityManager    entityManager;
+    EntityQuery      childQuery;
+    EntityQuery      edgeQuery;
+    EntityQuery      waitingQuery;
+    PacketVisualizer packetVisualizer;
 
     void Start()
     {
         entityManager = World.DefaultGameObjectInjectionWorld.EntityManager;
-        // Query all entities that are children of some parent node
-        childQuery = entityManager.CreateEntityQuery(typeof(NodeParent), typeof(NodeTransform));
+        childQuery    = entityManager.CreateEntityQuery(typeof(NodeParent), typeof(NodeTransform));
+        edgeQuery     = entityManager.CreateEntityQuery(typeof(Edge));
+        waitingQuery  = entityManager.CreateEntityQuery(typeof(Packet), typeof(WaitingAtNode));
     }
 
     void Update()
     {
-        // Collect children grouped by parent
+        if (packetVisualizer == null)
+            packetVisualizer = FindAnyObjectByType<PacketVisualizer>();
+
+        // Collect children grouped by parent — bounds + per-parent state
         var children = childQuery.ToEntityArray(Unity.Collections.Allocator.Temp);
         var parentBounds = new Dictionary<Entity, (Vector3 min, Vector3 max)>();
 
@@ -37,15 +52,52 @@ public class NodeBoundsVisualizer : MonoBehaviour
             var pos    = (Vector3)entityManager.GetComponentData<NodeTransform>(child).Position;
 
             if (parentBounds.TryGetValue(parent, out var b))
-            {
                 parentBounds[parent] = (Vector3.Min(b.min, pos), Vector3.Max(b.max, pos));
-            }
             else
-            {
                 parentBounds[parent] = (pos, pos);
-            }
         }
         children.Dispose();
+
+        // Per-parent state — start at Normal, escalate based on observed packet behavior
+        var parentStates = new Dictionary<Entity, BoundsState>();
+
+        // Walk all edges; for any internal edge (FromNode is a child), check stress on it
+        var edges = edgeQuery.ToEntityArray(Unity.Collections.Allocator.Temp);
+        foreach (var edgeEntity in edges)
+        {
+            var edge = entityManager.GetComponentData<Edge>(edgeEntity);
+            if (!entityManager.HasComponent<NodeParent>(edge.FromNode)) continue;
+
+            Entity parent = entityManager.GetComponentData<NodeParent>(edge.FromNode).Parent;
+
+            EdgeStressLevel stress = EdgeStressLevel.Free;
+            if (packetVisualizer != null)
+                packetVisualizer.EdgeStressMap.TryGetValue(edgeEntity, out stress);
+
+            if (stress == EdgeStressLevel.Free) continue;
+
+            BoundsState newState = (stress == EdgeStressLevel.Stressed || stress == EdgeStressLevel.Jammed)
+                ? BoundsState.Pressured
+                : BoundsState.Active;
+
+            Escalate(parentStates, parent, newState);
+        }
+        edges.Dispose();
+
+        // WaitingAtNode packets at child nodes count as pressured for that parent
+        var waitingPackets = waitingQuery.ToEntityArray(Unity.Collections.Allocator.Temp);
+        foreach (var entity in waitingPackets)
+        {
+            var packet = entityManager.GetComponentData<Packet>(entity);
+            if (!entityManager.Exists(packet.CurrentEdge)) continue;
+
+            var edge = entityManager.GetComponentData<Edge>(packet.CurrentEdge);
+            if (!entityManager.HasComponent<NodeParent>(edge.ToNode)) continue;
+
+            Entity parent = entityManager.GetComponentData<NodeParent>(edge.ToNode).Parent;
+            Escalate(parentStates, parent, BoundsState.Pressured);
+        }
+        waitingPackets.Dispose();
 
         // Draw or update a box for each composite parent
         foreach (var kv in parentBounds)
@@ -60,22 +112,30 @@ public class NodeBoundsVisualizer : MonoBehaviour
                 boxes[parent] = lr;
             }
 
-            // Rectangle corners (closed loop: 5 points, last == first)
             lr.SetPosition(0, new Vector3(min.x, min.y, min.z));
             lr.SetPosition(1, new Vector3(max.x, min.y, min.z));
             lr.SetPosition(2, new Vector3(max.x, max.y, min.z));
             lr.SetPosition(3, new Vector3(min.x, max.y, min.z));
             lr.SetPosition(4, new Vector3(min.x, min.y, min.z));
+
+            BoundsState state = parentStates.TryGetValue(parent, out var s) ? s : BoundsState.Normal;
+            lr.material = state switch
+            {
+                BoundsState.Pressured => matPressured,
+                BoundsState.Active    => matActive,
+                _                     => matNormal,
+            };
         }
 
         // Hide boxes for parents that no longer have children
         foreach (var kv in boxes)
-        {
-            if (!parentBounds.ContainsKey(kv.Key))
-                kv.Value.enabled = false;
-            else
-                kv.Value.enabled = true;
-        }
+            kv.Value.enabled = parentBounds.ContainsKey(kv.Key);
+    }
+
+    static void Escalate(Dictionary<Entity, BoundsState> states, Entity parent, BoundsState newState)
+    {
+        if (!states.TryGetValue(parent, out var current) || newState > current)
+            states[parent] = newState;
     }
 
     LineRenderer CreateBoxLine()
@@ -88,8 +148,7 @@ public class NodeBoundsVisualizer : MonoBehaviour
         lr.useWorldSpace = true;
         lr.startWidth    = LineWidth;
         lr.endWidth      = LineWidth;
-        lr.startColor    = BoundsColor;
-        lr.endColor      = BoundsColor;
+        lr.material      = matNormal;
         return lr;
     }
 }

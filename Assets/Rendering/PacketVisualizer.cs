@@ -2,11 +2,29 @@ using UnityEngine;
 using Unity.Entities;
 using System.Collections.Generic;
 
+/// <summary>
+/// Positions packet visuals along edges and sets per-packet color based on simulation state.
+/// Also computes EdgeStressMap each frame for use by EdgeVisualizer, MechanismVisualizer, and NodeBoundsVisualizer.
+/// Must execute before all other visualizers — enforced via DefaultExecutionOrder.
+/// </summary>
+[DefaultExecutionOrder(100)]
 public class PacketVisualizer : MonoBehaviour
 {
     public GameObject packetPrefab;
 
-    Dictionary<Entity, GameObject> visuals = new();
+    /// <summary>Per-edge stress level computed each frame from observed packet behavior.</summary>
+    public readonly Dictionary<Entity, EdgeStressLevel> EdgeStressMap = new();
+
+    readonly Dictionary<Entity, GameObject>   visuals      = new();
+    readonly Dictionary<Entity, MeshRenderer> renderers    = new();
+    readonly Dictionary<Entity, float>        lastProgress = new();
+    readonly Dictionary<Entity, Entity>       lastEdge     = new();
+
+    [Header("Packet Materials")]
+    public Material matTraveling;
+    public Material matBlocked;
+    public Material matAwaiting;
+    public Material matWaiting;
 
     EntityManager entityManager;
     EntityQuery   packetQuery;
@@ -21,7 +39,7 @@ public class PacketVisualizer : MonoBehaviour
     {
         var packets = packetQuery.ToEntityArray(Unity.Collections.Allocator.Temp);
 
-        // Detect destroyed packets and clean up their visuals
+        // Clean up visuals for destroyed packets
         var toRemove = new List<Entity>();
         foreach (var known in visuals.Keys)
             if (!entityManager.Exists(known))
@@ -30,19 +48,29 @@ public class PacketVisualizer : MonoBehaviour
         {
             Destroy(visuals[gone]);
             visuals.Remove(gone);
+            renderers.Remove(gone);
+            lastProgress.Remove(gone);
+            lastEdge.Remove(gone);
         }
+
+        EdgeStressMap.Clear();
+        var edgeTotal   = new Dictionary<Entity, int>();
+        var edgeBlocked = new Dictionary<Entity, int>();
 
         foreach (var entity in packets)
         {
             if (!visuals.ContainsKey(entity))
-                visuals[entity] = Instantiate(packetPrefab);
+            {
+                var go = Instantiate(packetPrefab);
+                visuals[entity]   = go;
+                renderers[entity] = go.GetComponent<MeshRenderer>();
+            }
 
             var packet  = entityManager.GetComponentData<Packet>(entity);
             var edge    = entityManager.GetComponentData<Edge>(packet.CurrentEdge);
             var fromPos = (Vector3)entityManager.GetComponentData<NodeTransform>(edge.FromNode).Position;
             var toPos   = (Vector3)entityManager.GetComponentData<NodeTransform>(edge.ToNode).Position;
 
-            // Temporary diagnostic
             if (float.IsNaN(fromPos.x) || float.IsNaN(toPos.x))
             {
                 Debug.LogError($"[PacketVisualizer] NaN position — edge {packet.CurrentEdge.Index} " +
@@ -50,18 +78,57 @@ public class PacketVisualizer : MonoBehaviour
                 continue;
             }
 
-            // Handle zero-length edges (mechanisms: instantaneous transit)
-            Vector3 packetPos;
-            if (edge.Length <= 0.0001f)
+            bool isAwaiting = entityManager.HasComponent<AwaitingRouting>(entity);
+            bool isWaiting  = entityManager.HasComponent<WaitingAtNode>(entity);
+
+            lastProgress.TryGetValue(entity, out float prevProgress);
+            lastEdge.TryGetValue(entity, out Entity prevEdge);
+            bool edgeChanged = prevEdge != packet.CurrentEdge;
+
+            // Blocked: wanted to move but progress did not advance, and the edge hasn't changed
+            bool isBlocked = !isAwaiting && !isWaiting && !edgeChanged &&
+                             packet.Speed > 0f && packet.Progress <= prevProgress;
+
+            lastProgress[entity] = packet.Progress;
+            lastEdge[entity]     = packet.CurrentEdge;
+
+            // Accumulate per-edge totals for stress map
+            Entity edgeEnt = packet.CurrentEdge;
+            if (!edgeTotal.TryAdd(edgeEnt, 1))
+                edgeTotal[edgeEnt]++;
+            if (isBlocked)
             {
-                packetPos = toPos;
-            }
-            else
-            {
-                packetPos = Vector3.Lerp(fromPos, toPos, packet.Progress / edge.Length);
+                if (!edgeBlocked.TryAdd(edgeEnt, 1))
+                    edgeBlocked[edgeEnt]++;
             }
 
+            // Position visual
+            Vector3 packetPos = edge.Length <= 0.0001f
+                ? toPos
+                : Vector3.Lerp(fromPos, toPos, packet.Progress / edge.Length);
+
             visuals[entity].transform.position = packetPos;
+
+            // Color via shared material — cached renderer avoids per-frame GetComponent
+            MeshRenderer r = renderers[entity];
+            if (r != null)
+            {
+                r.sharedMaterial = isAwaiting ? matAwaiting :
+                                   isWaiting  ? matWaiting  :
+                                   isBlocked  ? matBlocked  : matTraveling;
+            }
+        }
+
+        // Build edge stress map from per-edge counts
+        foreach (var kv in edgeTotal)
+        {
+            Entity e    = kv.Key;
+            int total   = kv.Value;
+            edgeBlocked.TryGetValue(e, out int blocked);
+
+            EdgeStressMap[e] = blocked == 0    ? EdgeStressLevel.Flowing  :
+                               blocked < total ? EdgeStressLevel.Stressed :
+                                                 EdgeStressLevel.Jammed;
         }
 
         packets.Dispose();
