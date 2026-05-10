@@ -135,6 +135,10 @@ These behaviors are not implemented — they emerge:
 - **Node type** — recognized by matching assembled structure against a recipe, never declared
 - **Routing** — emerges from mechanisms reading packet destinations and edge congestion
 
+### Spatial Foundation
+
+Every entity's `NodeTransform` stores position and rotation in its parent's local space. `WorldSpaceCacheSystem` computes world-space transforms each frame by composing local transforms up the `NodeParent` chain in topological order. All rendering and distance calculations read `WorldSpaceTransform`. `NodeBounds` stores entity size in local space for hit testing and layout. `NodeAnchors` stores entry and exit attachment points in local space — world-space anchors are derived by transforming through `WorldSpaceTransform`. `TopologyRoot` provides O(1) lookup of the owning root entity for any entity in the graph. `EdgeLengthCacheSystem` recomputes edge lengths every frame from world-space endpoint positions so simulation latency always reflects true spatial distance. A node is a canvas — its children live in its local coordinate system and transform with it automatically.
+
 ### Emergent Capacity
 
 Capacity is not a property of edges. Edges are passive geometry — they have length (latency) and physical presence (bead diameter). Throughput limiting is a decision, and decisions belong to mechanisms. A RateLimit mechanism guards entry to an edge and controls flow. An edge that appears "full" is full because beads are physically touching, not because a counter was exceeded. Dropped packets (Phase 4) occur at queue boundaries when physical space is exhausted, not when an integer limit is reached.
@@ -346,6 +350,11 @@ Do not work around these — implement them when their milestone arrives.
 | Supplying a manual length to `MakeEdge`        | Length is physical, not a design parameter    | `MakeEdge` derives length from `math.distance(fromPos, toPos)`     |
 | Adding `Capacity` or `Occupancy` to `Edge`     | Edges are passive geometry — no opinions      | Throughput limiting is a RateLimit mechanism (Phase 4)             |
 | "Node is just a visual grouping"               | Nodes enforce traversal — they are not chrome | Node is a containment boundary with simulation weight              |
+| Reading `NodeTransform` for world-space ops    | `NodeTransform` is local space                | Read `WorldSpaceTransform.Position`                                |
+| World-space child positions in `SpawnNode`     | Breaks transform composition                  | Set positions in parent-local space                                |
+| Structural change without `TopologyVersion`++  | Cache sort never rebuilds                     | Always increment on spawn / destroy / reparent                     |
+| Caching anchor positions in renderer           | Renderer shouldn't own simulation data        | Read `NodeAnchors` from ECS                                        |
+| Walking the `NodeParent` chain to find root    | O(depth) per entity                           | Read `TopologyRoot.Root` directly                                  |
 
 ---
 

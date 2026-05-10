@@ -16,11 +16,27 @@ public class LoomBootstrap : MonoBehaviour
     {
         var em = World.DefaultGameObjectInjectionWorld.EntityManager;
 
-        var topArch          = em.CreateArchetype(typeof(Node), typeof(NodeType), typeof(NodeTransform));
-        var childArch        = em.CreateArchetype(typeof(Node), typeof(NodeTransform), typeof(NodeParent));
-        var internalMechArch = em.CreateArchetype(typeof(Mechanism), typeof(MechanismType), typeof(NodeTransform), typeof(MechanismConnections), typeof(NodeParent));
-        var edgeArch         = em.CreateArchetype(typeof(Edge));
-        var packetArch       = em.CreateArchetype(typeof(Packet), typeof(PacketDestination), typeof(PacketSlot));
+        var topArch = em.CreateArchetype(
+            typeof(Node), typeof(NodeType),
+            typeof(NodeTransform), typeof(WorldSpaceTransform),
+            typeof(NodeBounds), typeof(NodeAnchors),
+            typeof(TopologyRoot), typeof(TransformDirty));
+
+        var childArch = em.CreateArchetype(
+            typeof(Node), typeof(NodeParent),
+            typeof(NodeTransform), typeof(WorldSpaceTransform),
+            typeof(NodeBounds), typeof(NodeAnchors),
+            typeof(TopologyRoot), typeof(TransformDirty));
+
+        var internalMechArch = em.CreateArchetype(
+            typeof(Mechanism), typeof(MechanismType), typeof(MechanismConnections),
+            typeof(NodeParent),
+            typeof(NodeTransform), typeof(WorldSpaceTransform),
+            typeof(NodeAnchors),
+            typeof(TopologyRoot), typeof(TransformDirty));
+
+        var edgeArch   = em.CreateArchetype(typeof(Edge));
+        var packetArch = em.CreateArchetype(typeof(Packet), typeof(PacketDestination), typeof(PacketSlot));
 
         if (nodeAType == null || nodeBType == null || nodeCType == null)
         {
@@ -28,25 +44,32 @@ public class LoomBootstrap : MonoBehaviour
             return;
         }
 
-        var resultA = SpawnNode(em, topArch, childArch, internalMechArch, edgeArch, nodeAType, new float3(-5, 0, 0), Entity.Null, id: 0);
-        var resultB = SpawnNode(em, topArch, childArch, internalMechArch, edgeArch, nodeBType, new float3( 5, 0, 0), Entity.Null, id: 1);
-        var resultC = SpawnNode(em, topArch, childArch, internalMechArch, edgeArch, nodeCType, new float3( 0, 0, 6), Entity.Null, id: 2);
+        var pending = new List<(Entity from, Entity to)>();
 
-        // A.Exits → B.Entry (direct — exit lanes are plain nodes, PacketTraverseSystem forwards them)
-        Entity eAtoB = Entity.Null;
+        var resultA = SpawnNode(em, topArch, childArch, internalMechArch, nodeAType, new float3(-5, 0, 0), Entity.Null, pending, id: 0);
+        var resultB = SpawnNode(em, topArch, childArch, internalMechArch, nodeBType, new float3( 5, 0, 0), Entity.Null, pending, id: 1);
+        var resultC = SpawnNode(em, topArch, childArch, internalMechArch, nodeCType, new float3( 0, 0, 6), Entity.Null, pending, id: 2);
+
+        // External wiring — record indices so packet placement can grab the first A→B edge.
+        int eAtoBIndex = -1;
         foreach (var exit in resultA.ExitNodes)
         {
-            var e = MakeEdge(em, edgeArch, exit, resultB.EntryNode);
-            if (eAtoB == Entity.Null) eAtoB = e;
+            if (eAtoBIndex < 0) eAtoBIndex = pending.Count;
+            pending.Add((exit, resultB.EntryNode));
         }
-
-        // B.Exits → C.Entry
         foreach (var exit in resultB.ExitNodes)
-            MakeEdge(em, edgeArch, exit, resultC.EntryNode);
-
-        // C.Exits → A.Entry
+            pending.Add((exit, resultC.EntryNode));
         foreach (var exit in resultC.ExitNodes)
-            MakeEdge(em, edgeArch, exit, resultA.EntryNode);
+            pending.Add((exit, resultA.EntryNode));
+
+        EnsureTopologyVersion(em);
+        InitializeWorldSpaceTransforms(em);
+
+        var edgeEntities = new Entity[pending.Count];
+        for (int i = 0; i < pending.Count; i++)
+            edgeEntities[i] = MakeEdge(em, edgeArch, pending[i].from, pending[i].to);
+
+        Entity eAtoB = edgeEntities[eAtoBIndex];
 
         // Packets start on the first A→B edge
         float eatoBLength = em.GetComponentData<Edge>(eAtoB).Length;
@@ -64,7 +87,8 @@ public class LoomBootstrap : MonoBehaviour
     }
 
     // -------------------------------------------------------------------------
-    // Recursive spawner
+    // Recursive spawner — positions are LOCAL to the parent node.
+    // For root-level nodes (parent == Entity.Null), local space = world space.
     // -------------------------------------------------------------------------
 
     class SpawnResult
@@ -79,33 +103,55 @@ public class LoomBootstrap : MonoBehaviour
         EntityManager em,
         EntityArchetype topArch, EntityArchetype childArch,
         EntityArchetype internalMechArch,
-        EntityArchetype edgeArch,
-        NodeTypeDefinition def, float3 position, Entity parent, int id = -1)
+        NodeTypeDefinition def, float3 position, Entity parent,
+        List<(Entity from, Entity to)> pendingEdges,
+        int id = -1)
     {
-        bool isTopLevel = parent == Entity.Null;
-        Entity node = em.CreateEntity(isTopLevel ? topArch : childArch);
+        bool   isTopLevel = parent == Entity.Null;
+        Entity node       = em.CreateEntity(isTopLevel ? topArch : childArch);
+
         em.SetComponentData(node, new Node { Id = id });
-        em.SetComponentData(node, new NodeTransform { Position = position });
+        em.SetComponentData(node, new NodeTransform { Position = position, Rotation = quaternion.identity });
 
         if (isTopLevel)
             em.SetComponentData(node, new NodeType { TypeName = def.typeName });
         else
             em.SetComponentData(node, new NodeParent { Parent = parent });
 
-        if (def.children == null || def.children.Length == 0)
-            return new SpawnResult { Node = node, EntryNode = node, ExitNodes = new Entity[] { node } };
+        // TopologyRoot — root nodes own themselves; children inherit from parent.
+        Entity root = isTopLevel
+            ? node
+            : em.GetComponentData<TopologyRoot>(parent).Root;
+        em.SetComponentData(node, new TopologyRoot { Root = root });
 
-        int numGroups = def.children.Length;
-
-        // laneCount = max child count across groups; sets the vertical extent of the frame.
+        // NodeBounds — laneCount drives vertical extent; leaves default to one lane.
         int laneCount = 1;
-        for (int g = 0; g < numGroups; g++)
-            laneCount = math.max(laneCount, math.max(1, def.children[g].count));
+        if (def.children != null)
+            for (int g = 0; g < def.children.Length; g++)
+                laneCount = math.max(laneCount, math.max(1, def.children[g].count));
+        em.SetComponentData(node, new NodeBounds
+        {
+            Size = new float2(def.frameWidth, laneCount * def.frameHeight)
+        });
 
-        float entryWallX  = position.x - def.frameWidth * 0.5f;
-        float exitWallX   = position.x + def.frameWidth * 0.5f;
+        // Local-space wall coordinates — origin (0,0,0) is the center of this node.
+        float entryWallX = -def.frameWidth * 0.5f;
+        float exitWallX  = +def.frameWidth * 0.5f;
+
+        // Leaf node — exit anchor is the right wall, entry anchor is the left wall.
+        if (def.children == null || def.children.Length == 0)
+        {
+            em.SetComponentData(node, new NodeAnchors
+            {
+                EntryLocal = new float3(entryWallX, 0f, 0f),
+                ExitLocal  = new float3(exitWallX,  0f, 0f),
+            });
+            return new SpawnResult { Node = node, EntryNode = node, ExitNodes = new Entity[] { node } };
+        }
+
+        int   numGroups   = def.children.Length;
         float totalHeight = laneCount * def.frameHeight;
-        float topY        = position.y + totalHeight * 0.5f;
+        float topY        = totalHeight * 0.5f;
 
         var groups = new List<List<SpawnResult>>(numGroups);
 
@@ -131,18 +177,24 @@ public class LoomBootstrap : MonoBehaviour
             for (int i = 0; i < count; i++)
             {
                 // Distribute children vertically across totalHeight, centered per lane.
-                float childY   = (count == 1)
-                    ? position.y
+                float childY = (count == 1)
+                    ? 0f
                     : topY - (i + 0.5f) * (totalHeight / count);
-                var   childPos = new float3(groupX, childY, position.z);
+                var childPos = new float3(groupX, childY, 0f);
 
                 SpawnResult result;
                 if (childEntry.childType == ChildType.Mechanism)
                 {
                     Entity mech = em.CreateEntity(internalMechArch);
-                    em.SetComponentData(mech, new NodeTransform { Position = childPos });
+                    em.SetComponentData(mech, new NodeTransform { Position = childPos, Rotation = quaternion.identity });
                     em.SetComponentData(mech, new MechanismType { Kind = childEntry.mechanismKind });
                     em.SetComponentData(mech, new NodeParent { Parent = node });
+                    em.SetComponentData(mech, new TopologyRoot { Root = root });
+                    em.SetComponentData(mech, new NodeAnchors
+                    {
+                        EntryLocal = float3.zero,
+                        ExitLocal  = float3.zero,
+                    });
                     result = new SpawnResult
                     {
                         Node        = mech,
@@ -158,8 +210,8 @@ public class LoomBootstrap : MonoBehaviour
                         Debug.LogWarning($"[LoomBootstrap] '{def.typeName}' children[{g}] has no definition — skipping.");
                         continue;
                     }
-                    result = SpawnNode(em, topArch, childArch, internalMechArch, edgeArch,
-                        childEntry.definition, childPos, node);
+                    result = SpawnNode(em, topArch, childArch, internalMechArch,
+                        childEntry.definition, childPos, node, pendingEdges);
                 }
 
                 // Tag the immediate child as the entry/exit of this frame.
@@ -175,9 +227,8 @@ public class LoomBootstrap : MonoBehaviour
             groups.Add(group);
         }
 
-        // Wire adjacent groups.
-        // Mechanism sources: add all outbound edges to their MechanismConnections.
-        // Node sources: edges are found by PacketTraverseSystem's outbound lookup.
+        // Wire adjacent groups. Edge creation is deferred so WorldSpaceTransform can be initialized
+        // before any MakeEdge call (MakeEdge derives length from world-space endpoint positions).
         for (int g = 0; g < numGroups - 1; g++)
         {
             var src = groups[g];
@@ -188,7 +239,7 @@ public class LoomBootstrap : MonoBehaviour
                 for (int d = 0; d < dst.Count; d++)
                 {
                     foreach (Entity srcExit in src[s].ExitNodes)
-                        MakeEdge(em, edgeArch, srcExit, dst[d].EntryNode);
+                        pendingEdges.Add((srcExit, dst[d].EntryNode));
                 }
             }
         }
@@ -199,6 +250,14 @@ public class LoomBootstrap : MonoBehaviour
         foreach (var r in lastGroup)
             foreach (var e in r.ExitNodes)
                 exitNodes.Add(e);
+
+        // NodeAnchors — entry on left wall, exit on right wall.
+        // Layout places exit lanes vertically symmetric around y=0, so centroid Y is 0 by construction.
+        em.SetComponentData(node, new NodeAnchors
+        {
+            EntryLocal = new float3(entryWallX, 0f, 0f),
+            ExitLocal  = new float3(exitWallX,  0f, 0f),
+        });
 
         return new SpawnResult
         {
@@ -215,13 +274,91 @@ public class LoomBootstrap : MonoBehaviour
     }
 
     // -------------------------------------------------------------------------
-    // Helpers
+    // World-space initialization — runs once before any MakeEdge call.
+    // BFS from roots; same composition logic as WorldSpaceCacheSystem.
+    // -------------------------------------------------------------------------
+
+    static void EnsureTopologyVersion(EntityManager em)
+    {
+        var q = em.CreateEntityQuery(typeof(TopologyVersion));
+        if (q.CalculateEntityCount() == 0)
+        {
+            Entity e = em.CreateEntity(typeof(TopologyVersion));
+            em.SetComponentData(e, new TopologyVersion { Version = 1 });
+        }
+        else
+        {
+            var arr = q.ToEntityArray(Unity.Collections.Allocator.Temp);
+            Entity e   = arr[0];
+            int    cur = em.GetComponentData<TopologyVersion>(e).Version;
+            em.SetComponentData(e, new TopologyVersion { Version = cur + 1 });
+            arr.Dispose();
+        }
+    }
+
+    static void InitializeWorldSpaceTransforms(EntityManager em)
+    {
+        var q   = em.CreateEntityQuery(
+            ComponentType.ReadOnly<NodeTransform>(),
+            ComponentType.ReadOnly<WorldSpaceTransform>());
+        var all = q.ToEntityArray(Unity.Collections.Allocator.Temp);
+
+        var childrenByParent = new Dictionary<Entity, List<Entity>>();
+        var roots            = new List<Entity>();
+
+        foreach (var e in all)
+        {
+            if (em.HasComponent<NodeParent>(e))
+            {
+                Entity p = em.GetComponentData<NodeParent>(e).Parent;
+                if (!childrenByParent.TryGetValue(p, out var list))
+                    childrenByParent[p] = list = new List<Entity>();
+                list.Add(e);
+            }
+            else
+            {
+                roots.Add(e);
+            }
+        }
+
+        var queue = new Queue<Entity>(roots);
+        while (queue.Count > 0)
+        {
+            Entity e  = queue.Dequeue();
+            var    lt = em.GetComponentData<NodeTransform>(e);
+
+            float3     wPos;
+            quaternion wRot;
+            if (em.HasComponent<NodeParent>(e))
+            {
+                Entity p  = em.GetComponentData<NodeParent>(e).Parent;
+                var    pw = em.GetComponentData<WorldSpaceTransform>(p);
+                wPos = pw.Position + math.rotate(pw.Rotation, lt.Position);
+                wRot = math.mul(pw.Rotation, lt.Rotation);
+            }
+            else
+            {
+                wPos = lt.Position;
+                wRot = lt.Rotation;
+            }
+            em.SetComponentData(e, new WorldSpaceTransform { Position = wPos, Rotation = wRot });
+
+            if (childrenByParent.TryGetValue(e, out var children))
+                foreach (var c in children) queue.Enqueue(c);
+        }
+
+        all.Dispose();
+    }
+
+    // -------------------------------------------------------------------------
+    // Edge construction — reads WorldSpaceTransform for the initial length.
+    // EdgeLengthCacheSystem keeps Length current every frame after bootstrap.
     // -------------------------------------------------------------------------
 
     Entity MakeEdge(EntityManager em, EntityArchetype arch, Entity from, Entity to)
     {
-        var fromPos = em.GetComponentData<NodeTransform>(from).Position;
-        var toPos   = em.GetComponentData<NodeTransform>(to).Position;
+        var fromPos = em.GetComponentData<WorldSpaceTransform>(from).Position;
+        var toPos   = em.GetComponentData<WorldSpaceTransform>(to).Position;
         Entity edge = em.CreateEntity(arch);
         em.SetComponentData(edge, new Edge
         {

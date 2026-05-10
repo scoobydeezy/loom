@@ -3,7 +3,7 @@ using Unity.Entities;
 using System.Collections.Generic;
 
 /// <summary>
-/// Renders a diamond (rotated square) at each Mechanism entity's NodeTransform position.
+/// Renders a diamond (rotated square) at each Mechanism entity's WorldSpaceTransform position.
 /// Color reflects routing pressure: idle, active (has packets awaiting routing),
 /// or pressured (active and an inbound edge has blocked traffic).
 /// Reads ECS state every frame — never caches positions, so node dragging works automatically.
@@ -30,7 +30,7 @@ public class MechanismVisualizer : MonoBehaviour
     void Start()
     {
         entityManager  = World.DefaultGameObjectInjectionWorld.EntityManager;
-        mechanismQuery = entityManager.CreateEntityQuery(typeof(Mechanism), typeof(NodeTransform));
+        mechanismQuery = entityManager.CreateEntityQuery(typeof(Mechanism), typeof(WorldSpaceTransform));
         awaitingQuery  = entityManager.CreateEntityQuery(typeof(Packet), typeof(AwaitingRouting));
         edgeQuery      = entityManager.CreateEntityQuery(typeof(Edge));
     }
@@ -78,7 +78,7 @@ public class MechanismVisualizer : MonoBehaviour
                 diamonds[entity] = lr;
             }
 
-            var pos = (Vector3)entityManager.GetComponentData<NodeTransform>(entity).Position;
+            var pos = (Vector3)entityManager.GetComponentData<WorldSpaceTransform>(entity).Position;
             SetDiamondPositions(lr, pos);
 
             lr.material = pressuredMechanisms.Contains(entity) ? matPressured :

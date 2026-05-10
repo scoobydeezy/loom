@@ -5,7 +5,7 @@ using System.Collections.Generic;
 /// <summary>
 /// Renders every edge as a LineRenderer. Color reflects observed flow stress from PacketVisualizer.
 /// Width distinguishes global edges from internal (child) edges.
-/// Reads positions from NodeTransform every frame — never caches, so node dragging works automatically.
+/// Reads positions from WorldSpaceTransform every frame — never caches, so node dragging works automatically.
 /// </summary>
 [DefaultExecutionOrder(200)]
 public class EdgeVisualizer : MonoBehaviour
@@ -50,8 +50,8 @@ public class EdgeVisualizer : MonoBehaviour
 
             if (!entityManager.Exists(edge.FromNode) || !entityManager.Exists(edge.ToNode))
                 continue;
-            if (!entityManager.HasComponent<NodeTransform>(edge.FromNode) ||
-                !entityManager.HasComponent<NodeTransform>(edge.ToNode))
+            if (!entityManager.HasComponent<WorldSpaceTransform>(edge.FromNode) ||
+                !entityManager.HasComponent<WorldSpaceTransform>(edge.ToNode))
                 continue;
 
             bool isInternal = RenderingUtils.IsInternalEdge(entityManager, edge);
@@ -59,10 +59,10 @@ public class EdgeVisualizer : MonoBehaviour
             // Internal edges connect children inside a composite — draw between their centers.
             // External edges terminate at frame anchors (FrameEntry/FrameExit entities sit on the wall).
             Vector3 fromPos = isInternal
-                ? (Vector3)entityManager.GetComponentData<NodeTransform>(edge.FromNode).Position
+                ? (Vector3)entityManager.GetComponentData<WorldSpaceTransform>(edge.FromNode).Position
                 : RenderingUtils.ResolvePosition(entityManager, nodeFrameVisualizer, edge.FromNode);
             Vector3 toPos = isInternal
-                ? (Vector3)entityManager.GetComponentData<NodeTransform>(edge.ToNode).Position
+                ? (Vector3)entityManager.GetComponentData<WorldSpaceTransform>(edge.ToNode).Position
                 : RenderingUtils.ResolvePosition(entityManager, nodeFrameVisualizer, edge.ToNode);
 
             EdgeStressLevel stress = EdgeStressLevel.Free;

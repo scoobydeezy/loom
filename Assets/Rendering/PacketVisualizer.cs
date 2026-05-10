@@ -77,10 +77,10 @@ public class PacketVisualizer : MonoBehaviour
             // (FrameEntry/FrameExit entities sit on the wall) to stay in sync with EdgeVisualizer.
             bool isInternal = RenderingUtils.IsInternalEdge(entityManager, edge);
             Vector3 fromPos = isInternal
-                ? (Vector3)entityManager.GetComponentData<NodeTransform>(edge.FromNode).Position
+                ? (Vector3)entityManager.GetComponentData<WorldSpaceTransform>(edge.FromNode).Position
                 : RenderingUtils.ResolvePosition(entityManager, nodeFrameVisualizer, edge.FromNode);
             Vector3 toPos = isInternal
-                ? (Vector3)entityManager.GetComponentData<NodeTransform>(edge.ToNode).Position
+                ? (Vector3)entityManager.GetComponentData<WorldSpaceTransform>(edge.ToNode).Position
                 : RenderingUtils.ResolvePosition(entityManager, nodeFrameVisualizer, edge.ToNode);
 
             if (float.IsNaN(fromPos.x) || float.IsNaN(toPos.x))

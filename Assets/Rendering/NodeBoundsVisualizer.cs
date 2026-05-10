@@ -6,7 +6,7 @@ using System.Collections.Generic;
 /// Draws an axis-aligned bounding box around each composite node's children every frame.
 /// Outline color reflects internal-graph health: normal, active (packets inside),
 /// or pressured (packets inside are blocked or waiting).
-/// Reads NodeParent and NodeTransform from ECS — never caches positions.
+/// Reads NodeParent and WorldSpaceTransform from ECS — never caches positions.
 /// </summary>
 [DefaultExecutionOrder(400)]
 public class NodeBoundsVisualizer : MonoBehaviour
@@ -35,7 +35,7 @@ public class NodeBoundsVisualizer : MonoBehaviour
     void Start()
     {
         entityManager = World.DefaultGameObjectInjectionWorld.EntityManager;
-        childQuery    = entityManager.CreateEntityQuery(typeof(NodeParent), typeof(NodeTransform));
+        childQuery    = entityManager.CreateEntityQuery(typeof(NodeParent), typeof(WorldSpaceTransform));
         edgeQuery     = entityManager.CreateEntityQuery(typeof(Edge));
         waitingQuery  = entityManager.CreateEntityQuery(typeof(Packet), typeof(WaitingAtNode));
     }
@@ -59,7 +59,7 @@ public class NodeBoundsVisualizer : MonoBehaviour
         foreach (var child in children)
         {
             var parent = entityManager.GetComponentData<NodeParent>(child).Parent;
-            var pos    = (Vector3)entityManager.GetComponentData<NodeTransform>(child).Position;
+            var pos    = (Vector3)entityManager.GetComponentData<WorldSpaceTransform>(child).Position;
 
             if (parentBounds.TryGetValue(parent, out var b))
                 parentBounds[parent] = (Vector3.Min(b.min, pos), Vector3.Max(b.max, pos));

@@ -1,11 +1,13 @@
 using UnityEngine;
 using Unity.Entities;
+using Unity.Mathematics;
 using System.Collections.Generic;
 
 /// <summary>
 /// Builds physical frame geometry for each composite node, derived from the world-space positions
-/// of its FrameEntry and FrameExit children. Anchors live on the entity itself — the entry/exit
-/// entity is positioned exactly on the wall — so AnchorPositions just mirrors NodeTransform.
+/// of its FrameEntry and FrameExit children. Anchor positions are derived from the entity's
+/// WorldSpaceTransform — ECS is the source of truth — and cached in AnchorPositions for the
+/// edge / packet visualizers to look up.
 /// </summary>
 [DefaultExecutionOrder(50)]
 public class NodeFrameVisualizer : MonoBehaviour
@@ -40,7 +42,7 @@ public class NodeFrameVisualizer : MonoBehaviour
     /// <summary>
     /// World-space anchor position per FrameEntry / FrameExit entity, refreshed each frame.
     /// External edges and packets resolve their endpoints through this table; misses fall back
-    /// to NodeTransform (see RenderingUtils.ResolvePosition).
+    /// to WorldSpaceTransform (see RenderingUtils.ResolvePosition).
     /// </summary>
     public readonly Dictionary<Entity, Vector3> AnchorPositions = new();
 
@@ -58,9 +60,9 @@ public class NodeFrameVisualizer : MonoBehaviour
     void Start()
     {
         entityManager = World.DefaultGameObjectInjectionWorld.EntityManager;
-        nodeQuery     = entityManager.CreateEntityQuery(typeof(Node), typeof(NodeTransform));
-        entryQuery    = entityManager.CreateEntityQuery(typeof(FrameEntry), typeof(NodeTransform), typeof(NodeParent));
-        exitQuery     = entityManager.CreateEntityQuery(typeof(FrameExit),  typeof(NodeTransform), typeof(NodeParent));
+        nodeQuery     = entityManager.CreateEntityQuery(typeof(Node), typeof(WorldSpaceTransform));
+        entryQuery    = entityManager.CreateEntityQuery(typeof(FrameEntry), typeof(WorldSpaceTransform), typeof(NodeParent));
+        exitQuery     = entityManager.CreateEntityQuery(typeof(FrameExit),  typeof(WorldSpaceTransform), typeof(NodeParent));
         edgeQuery     = entityManager.CreateEntityQuery(typeof(Edge));
         waitingQuery  = entityManager.CreateEntityQuery(typeof(Packet), typeof(WaitingAtNode));
     }
@@ -92,7 +94,7 @@ public class NodeFrameVisualizer : MonoBehaviour
     {
         var arr = q.ToEntityArray(Unity.Collections.Allocator.Temp);
         foreach (var e in arr)
-            AnchorPositions[e] = (Vector3)entityManager.GetComponentData<NodeTransform>(e).Position;
+            AnchorPositions[e] = (Vector3)entityManager.GetComponentData<WorldSpaceTransform>(e).Position;
         arr.Dispose();
     }
 
@@ -149,14 +151,14 @@ public class NodeFrameVisualizer : MonoBehaviour
         if (!hasEntry && !hasExits) return;
 
         Vector3 entryPos = hasEntry
-            ? (Vector3)entityManager.GetComponentData<NodeTransform>(entryEntity).Position
+            ? (Vector3)entityManager.GetComponentData<WorldSpaceTransform>(entryEntity).Position
             : Vector3.zero;
 
         var exitPositions = new List<Vector3>(hasExits ? exitEntities.Count : 0);
         if (hasExits)
         {
             foreach (var e in exitEntities)
-                exitPositions.Add((Vector3)entityManager.GetComponentData<NodeTransform>(e).Position);
+                exitPositions.Add((Vector3)entityManager.GetComponentData<WorldSpaceTransform>(e).Position);
         }
 
         // Wall X coordinates from anchor positions (entries on left wall, exits on right wall).
