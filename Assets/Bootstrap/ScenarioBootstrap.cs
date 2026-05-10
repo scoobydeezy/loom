@@ -143,9 +143,15 @@ public class ScenarioBootstrap : MonoBehaviour
             return new SpawnResult { Node = node, EntryNode = node, ExitNodes = new Entity[] { node } };
 
         int numGroups = def.children.Length;
-        const float groupSpacing = 1.5f;
-        const float nodeSpacing  = 0.8f;
-        float totalHeight = (numGroups - 1) * groupSpacing;
+
+        int laneCount = 1;
+        for (int g = 0; g < numGroups; g++)
+            laneCount = math.max(laneCount, math.max(1, def.children[g].count));
+
+        float entryWallX  = position.x - def.frameWidth * 0.5f;
+        float exitWallX   = position.x + def.frameWidth * 0.5f;
+        float totalHeight = laneCount * def.frameHeight;
+        float topY        = position.y + totalHeight * 0.5f;
 
         var groups = new List<List<SpawnResult>>(numGroups);
 
@@ -153,27 +159,38 @@ public class ScenarioBootstrap : MonoBehaviour
         {
             var childEntry = def.children[g];
             int count      = Mathf.Max(1, childEntry.count);
-            float groupY   = position.y - totalHeight * 0.5f + g * groupSpacing;
             var group      = new List<SpawnResult>(count);
+
+            bool isFirstGroup = (g == 0);
+            bool isLastGroup  = (g == numGroups - 1);
+
+            float groupX;
+            if (numGroups == 1)        groupX = exitWallX;
+            else if (isFirstGroup)     groupX = entryWallX;
+            else if (isLastGroup)      groupX = exitWallX;
+            else                       groupX = math.lerp(entryWallX, exitWallX, (float)g / (numGroups - 1));
 
             for (int i = 0; i < count; i++)
             {
-                float childX   = position.x + (i - (count - 1) * 0.5f) * nodeSpacing;
-                var   childPos = new float3(childX, groupY, position.z);
+                float childY   = (count == 1)
+                    ? position.y
+                    : topY - (i + 0.5f) * (totalHeight / count);
+                var   childPos = new float3(groupX, childY, position.z);
 
+                SpawnResult result;
                 if (childEntry.childType == ChildType.Mechanism)
                 {
                     Entity mech = em.CreateEntity(internalMechArch);
                     em.SetComponentData(mech, new NodeTransform { Position = childPos });
                     em.SetComponentData(mech, new MechanismType { Kind = childEntry.mechanismKind });
                     em.SetComponentData(mech, new NodeParent { Parent = node });
-                    group.Add(new SpawnResult
+                    result = new SpawnResult
                     {
                         Node        = mech,
                         EntryNode   = mech,
                         ExitNodes   = new Entity[] { mech },
-                        IsMechanism = true
-                    });
+                        IsMechanism = true,
+                    };
                 }
                 else
                 {
@@ -182,9 +199,14 @@ public class ScenarioBootstrap : MonoBehaviour
                         Debug.LogWarning($"[ScenarioBootstrap] '{def.typeName}' children[{g}] has no definition — skipping.");
                         continue;
                     }
-                    group.Add(SpawnNode(em, topArch, childArch, internalMechArch, edgeArch,
-                        childEntry.definition, childPos, node));
+                    result = SpawnNode(em, topArch, childArch, internalMechArch, edgeArch,
+                        childEntry.definition, childPos, node);
                 }
+
+                if (isFirstGroup) AddIfMissing<FrameEntry>(em, result.Node);
+                if (isLastGroup)  AddIfMissing<FrameExit>(em, result.Node);
+
+                group.Add(result);
             }
 
             groups.Add(group);
@@ -192,9 +214,8 @@ public class ScenarioBootstrap : MonoBehaviour
 
         for (int g = 0; g < numGroups - 1; g++)
         {
-            var src      = groups[g];
-            var dst      = groups[g + 1];
-            var srcEntry = def.children[g];
+            var src = groups[g];
+            var dst = groups[g + 1];
 
             for (int s = 0; s < src.Count; s++)
             {
@@ -218,6 +239,12 @@ public class ScenarioBootstrap : MonoBehaviour
             EntryNode = groups[0].Count > 0 ? groups[0][0].EntryNode : node,
             ExitNodes = exitNodes.Count > 0 ? exitNodes.ToArray() : new Entity[] { node },
         };
+    }
+
+    static void AddIfMissing<T>(EntityManager em, Entity e) where T : unmanaged, IComponentData
+    {
+        if (!em.HasComponent<T>(e))
+            em.AddComponent<T>(e);
     }
 
     // -------------------------------------------------------------------------

@@ -21,5 +21,7 @@ MonoBehaviour:
     outEdgeLength: 0.2
     outEdgeCapacity: 50
     role: processing
+  frameWidth: 1.5
+  frameHeight: 0.8
   edgeCapacity: 1
   internalPathLength: 0.1

@@ -35,5 +35,7 @@ MonoBehaviour:
     outEdgeLength: 0.1
     outEdgeCapacity: 100
     role: priority dispatcher
+  frameWidth: 3.0
+  frameHeight: 0.8
   edgeCapacity: 1
   internalPathLength: 0.1

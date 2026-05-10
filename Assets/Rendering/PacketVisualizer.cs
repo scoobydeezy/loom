@@ -26,8 +26,9 @@ public class PacketVisualizer : MonoBehaviour
     public Material matAwaiting;
     public Material matWaiting;
 
-    EntityManager entityManager;
-    EntityQuery   packetQuery;
+    EntityManager        entityManager;
+    EntityQuery          packetQuery;
+    NodeFrameVisualizer  nodeFrameVisualizer;
 
     void Start()
     {
@@ -37,6 +38,9 @@ public class PacketVisualizer : MonoBehaviour
 
     void Update()
     {
+        if (nodeFrameVisualizer == null)
+            nodeFrameVisualizer = FindAnyObjectByType<NodeFrameVisualizer>();
+
         var packets = packetQuery.ToEntityArray(Unity.Collections.Allocator.Temp);
 
         // Clean up visuals for destroyed packets
@@ -66,10 +70,18 @@ public class PacketVisualizer : MonoBehaviour
                 renderers[entity] = go.GetComponent<MeshRenderer>();
             }
 
-            var packet  = entityManager.GetComponentData<Packet>(entity);
-            var edge    = entityManager.GetComponentData<Edge>(packet.CurrentEdge);
-            var fromPos = (Vector3)entityManager.GetComponentData<NodeTransform>(edge.FromNode).Position;
-            var toPos   = (Vector3)entityManager.GetComponentData<NodeTransform>(edge.ToNode).Position;
+            var packet = entityManager.GetComponentData<Packet>(entity);
+            var edge   = entityManager.GetComponentData<Edge>(packet.CurrentEdge);
+
+            // Internal edges lerp between child centers; external edges lerp between frame anchors
+            // (FrameEntry/FrameExit entities sit on the wall) to stay in sync with EdgeVisualizer.
+            bool isInternal = RenderingUtils.IsInternalEdge(entityManager, edge);
+            Vector3 fromPos = isInternal
+                ? (Vector3)entityManager.GetComponentData<NodeTransform>(edge.FromNode).Position
+                : RenderingUtils.ResolvePosition(entityManager, nodeFrameVisualizer, edge.FromNode);
+            Vector3 toPos = isInternal
+                ? (Vector3)entityManager.GetComponentData<NodeTransform>(edge.ToNode).Position
+                : RenderingUtils.ResolvePosition(entityManager, nodeFrameVisualizer, edge.ToNode);
 
             if (float.IsNaN(fromPos.x) || float.IsNaN(toPos.x))
             {

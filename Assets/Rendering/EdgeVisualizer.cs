@@ -21,9 +21,10 @@ public class EdgeVisualizer : MonoBehaviour
 
     readonly Dictionary<Entity, LineRenderer> lines = new();
 
-    EntityManager    entityManager;
-    EntityQuery      edgeQuery;
-    PacketVisualizer packetVisualizer;
+    EntityManager        entityManager;
+    EntityQuery          edgeQuery;
+    PacketVisualizer     packetVisualizer;
+    NodeFrameVisualizer  nodeFrameVisualizer;
 
     void Start()
     {
@@ -35,6 +36,8 @@ public class EdgeVisualizer : MonoBehaviour
     {
         if (packetVisualizer == null)
             packetVisualizer = FindAnyObjectByType<PacketVisualizer>();
+        if (nodeFrameVisualizer == null)
+            nodeFrameVisualizer = FindAnyObjectByType<NodeFrameVisualizer>();
 
         var edges = edgeQuery.ToEntityArray(Unity.Collections.Allocator.Temp);
 
@@ -51,19 +54,16 @@ public class EdgeVisualizer : MonoBehaviour
                 !entityManager.HasComponent<NodeTransform>(edge.ToNode))
                 continue;
 
-            var fromPos = (Vector3)entityManager.GetComponentData<NodeTransform>(edge.FromNode).Position;
-            var toPos   = (Vector3)entityManager.GetComponentData<NodeTransform>(edge.ToNode).Position;
+            bool isInternal = RenderingUtils.IsInternalEdge(entityManager, edge);
 
-            // An edge is internal when both endpoints are children of the same parent node.
-            bool fromIsChild = entityManager.HasComponent<NodeParent>(edge.FromNode);
-            bool toIsChild   = entityManager.HasComponent<NodeParent>(edge.ToNode);
-            bool isInternal  = false;
-            if (fromIsChild && toIsChild)
-            {
-                var fromParent = entityManager.GetComponentData<NodeParent>(edge.FromNode).Parent;
-                var toParent   = entityManager.GetComponentData<NodeParent>(edge.ToNode).Parent;
-                isInternal = fromParent == toParent;
-            }
+            // Internal edges connect children inside a composite — draw between their centers.
+            // External edges terminate at frame anchors (FrameEntry/FrameExit entities sit on the wall).
+            Vector3 fromPos = isInternal
+                ? (Vector3)entityManager.GetComponentData<NodeTransform>(edge.FromNode).Position
+                : RenderingUtils.ResolvePosition(entityManager, nodeFrameVisualizer, edge.FromNode);
+            Vector3 toPos = isInternal
+                ? (Vector3)entityManager.GetComponentData<NodeTransform>(edge.ToNode).Position
+                : RenderingUtils.ResolvePosition(entityManager, nodeFrameVisualizer, edge.ToNode);
 
             EdgeStressLevel stress = EdgeStressLevel.Free;
             if (packetVisualizer != null)

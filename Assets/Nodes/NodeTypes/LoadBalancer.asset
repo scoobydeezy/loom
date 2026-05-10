@@ -35,5 +35,7 @@ MonoBehaviour:
     outEdgeLength: 0.1
     outEdgeCapacity: 50
     role: backends
+  frameWidth: 3.0
+  frameHeight: 0.5
   edgeCapacity: 1
   internalPathLength: 0.1

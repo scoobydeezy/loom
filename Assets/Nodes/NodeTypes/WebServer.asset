@@ -35,5 +35,7 @@ MonoBehaviour:
     outEdgeLength: 0.2
     outEdgeCapacity: 50
     role: workers
+  frameWidth: 3.0
+  frameHeight: 0.4
   edgeCapacity: 1
   internalPathLength: 1

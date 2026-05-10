@@ -32,4 +32,10 @@ public class NodeTypeDefinition : ScriptableObject
 
     [Tooltip("Child entries (nodes or mechanisms) assembled into this node's internal graph. Empty = leaf node.")]
     public NodeTypeChild[] children;
+
+    [Tooltip("Internal width — the world-space distance between the entry wall and the exit wall.")]
+    public float frameWidth = 2.0f;
+
+    [Tooltip("Per-lane height. Total frame height = laneCount * frameHeight, where laneCount is the maximum child count across groups.")]
+    public float frameHeight = 1.0f;
 }

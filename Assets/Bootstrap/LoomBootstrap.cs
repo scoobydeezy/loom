@@ -96,9 +96,16 @@ public class LoomBootstrap : MonoBehaviour
             return new SpawnResult { Node = node, EntryNode = node, ExitNodes = new Entity[] { node } };
 
         int numGroups = def.children.Length;
-        const float groupSpacing = 1.5f;
-        const float nodeSpacing  = 0.8f;
-        float totalHeight = (numGroups - 1) * groupSpacing;
+
+        // laneCount = max child count across groups; sets the vertical extent of the frame.
+        int laneCount = 1;
+        for (int g = 0; g < numGroups; g++)
+            laneCount = math.max(laneCount, math.max(1, def.children[g].count));
+
+        float entryWallX  = position.x - def.frameWidth * 0.5f;
+        float exitWallX   = position.x + def.frameWidth * 0.5f;
+        float totalHeight = laneCount * def.frameHeight;
+        float topY        = position.y + totalHeight * 0.5f;
 
         var groups = new List<List<SpawnResult>>(numGroups);
 
@@ -106,27 +113,43 @@ public class LoomBootstrap : MonoBehaviour
         {
             var childEntry = def.children[g];
             int count      = Mathf.Max(1, childEntry.count);
-            float groupY   = position.y - totalHeight * 0.5f + g * groupSpacing;
             var group      = new List<SpawnResult>(count);
+
+            bool isFirstGroup = (g == 0);
+            bool isLastGroup  = (g == numGroups - 1);
+
+            // Group X — entry wall, exit wall, or evenly distributed between.
+            // For numGroups == 1 the single group is both entry and exit; place at the exit wall
+            // so external lines arriving from the right terminate cleanly. The entry wall is then
+            // visually collapsed onto the exit wall, which the visualizer handles gracefully.
+            float groupX;
+            if (numGroups == 1)        groupX = exitWallX;
+            else if (isFirstGroup)     groupX = entryWallX;
+            else if (isLastGroup)      groupX = exitWallX;
+            else                       groupX = math.lerp(entryWallX, exitWallX, (float)g / (numGroups - 1));
 
             for (int i = 0; i < count; i++)
             {
-                float childX   = position.x + (i - (count - 1) * 0.5f) * nodeSpacing;
-                var   childPos = new float3(childX, groupY, position.z);
+                // Distribute children vertically across totalHeight, centered per lane.
+                float childY   = (count == 1)
+                    ? position.y
+                    : topY - (i + 0.5f) * (totalHeight / count);
+                var   childPos = new float3(groupX, childY, position.z);
 
+                SpawnResult result;
                 if (childEntry.childType == ChildType.Mechanism)
                 {
                     Entity mech = em.CreateEntity(internalMechArch);
                     em.SetComponentData(mech, new NodeTransform { Position = childPos });
                     em.SetComponentData(mech, new MechanismType { Kind = childEntry.mechanismKind });
                     em.SetComponentData(mech, new NodeParent { Parent = node });
-                    group.Add(new SpawnResult
+                    result = new SpawnResult
                     {
                         Node        = mech,
                         EntryNode   = mech,
                         ExitNodes   = new Entity[] { mech },
-                        IsMechanism = true
-                    });
+                        IsMechanism = true,
+                    };
                 }
                 else
                 {
@@ -135,9 +158,18 @@ public class LoomBootstrap : MonoBehaviour
                         Debug.LogWarning($"[LoomBootstrap] '{def.typeName}' children[{g}] has no definition — skipping.");
                         continue;
                     }
-                    group.Add(SpawnNode(em, topArch, childArch, internalMechArch, edgeArch,
-                        childEntry.definition, childPos, node));
+                    result = SpawnNode(em, topArch, childArch, internalMechArch, edgeArch,
+                        childEntry.definition, childPos, node);
                 }
+
+                // Tag the immediate child as the entry/exit of this frame.
+                // Inner composites tag their own recursive entry/exit independently — the same entity
+                // is never tagged twice by this scope, but a deeper recursion may have already tagged
+                // a different inner entity. AddIfMissing keeps stamping idempotent.
+                if (isFirstGroup) AddIfMissing<FrameEntry>(em, result.Node);
+                if (isLastGroup)  AddIfMissing<FrameExit>(em, result.Node);
+
+                group.Add(result);
             }
 
             groups.Add(group);
@@ -148,9 +180,8 @@ public class LoomBootstrap : MonoBehaviour
         // Node sources: edges are found by PacketTraverseSystem's outbound lookup.
         for (int g = 0; g < numGroups - 1; g++)
         {
-            var src      = groups[g];
-            var dst      = groups[g + 1];
-            var srcEntry = def.children[g];
+            var src = groups[g];
+            var dst = groups[g + 1];
 
             for (int s = 0; s < src.Count; s++)
             {
@@ -175,6 +206,12 @@ public class LoomBootstrap : MonoBehaviour
             EntryNode = groups[0].Count > 0 ? groups[0][0].EntryNode : node,
             ExitNodes = exitNodes.Count > 0 ? exitNodes.ToArray() : new Entity[] { node },
         };
+    }
+
+    static void AddIfMissing<T>(EntityManager em, Entity e) where T : unmanaged, IComponentData
+    {
+        if (!em.HasComponent<T>(e))
+            em.AddComponent<T>(e);
     }
 
     // -------------------------------------------------------------------------

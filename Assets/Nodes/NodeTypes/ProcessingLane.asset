@@ -14,5 +14,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::NodeTypeDefinition
   typeName: ProcessingLane
   children: []
+  frameWidth: 1.5
+  frameHeight: 0.8
   edgeCapacity: 1
   internalPathLength: 3

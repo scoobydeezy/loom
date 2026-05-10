@@ -14,5 +14,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::NodeTypeDefinition
   typeName: QueueHolding
   children: []
+  frameWidth: 1.0
+  frameHeight: 0.8
   edgeCapacity: 100
   internalPathLength: 0.1

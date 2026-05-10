@@ -21,6 +21,9 @@ public class NodeBoundsVisualizer : MonoBehaviour
     public Material matActive;
     public Material matPressured;
 
+    [Header("Debug")]
+    public bool showDebugBounds = true;
+
     readonly Dictionary<Entity, LineRenderer> boxes = new();
 
     EntityManager    entityManager;
@@ -39,6 +42,13 @@ public class NodeBoundsVisualizer : MonoBehaviour
 
     void Update()
     {
+        if (!showDebugBounds)
+        {
+            foreach (var kv in boxes)
+                kv.Value.enabled = false;
+            return;
+        }
+
         if (packetVisualizer == null)
             packetVisualizer = FindAnyObjectByType<PacketVisualizer>();
 
