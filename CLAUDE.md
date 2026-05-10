@@ -153,6 +153,12 @@ Capacity is not a property of edges. Edges are passive geometry — they have le
 | Node System      | Internal structure — child graphs, entry/exit points     |
 | Rendering System | Visualization of simulation state                        |
 
+### World Builder Architecture
+
+The world builder lives in `Assets/WorldBuilder/` — never `Assets/Editor/`, which Unity reserves for editor-only assemblies stripped from runtime builds. The world builder runs at runtime in both Edit and Play mode.
+
+All structural mutations to the ECS world flow through `EditorCommandBuffer`. Commands are serializable value objects containing only primitives and `StableId` values — never `Entity` references. `StableId` is a stable `ulong` identity assigned at spawn that persists across sessions, enabling save/load, replay, and scenario scripting. `EcsSnapshot` is the single utility for capturing and restoring entity hierarchies — used by destroy/undo, copy/paste, and save/load. Multiple commands are grouped into transactions via `BeginTransaction`/`EndTransaction`, producing one undo step and one topology stamp. Edit-mode operations are recorded to the undo stack. Simulation-sourced mutations are raised on `SimulationEventBus` and executed with `recordForUndo: false`. `WorldQuery` is the read-only façade for all UI and tool access to ECS state — `EntityManager` is never accessed directly from UI code.
+
 ---
 
 ## Tech Stack
@@ -355,6 +361,15 @@ Do not work around these — implement them when their milestone arrives.
 | Structural change without `TopologyVersion`++  | Cache sort never rebuilds                     | Always increment on spawn / destroy / reparent                     |
 | Caching anchor positions in renderer           | Renderer shouldn't own simulation data        | Read `NodeAnchors` from ECS                                        |
 | Walking the `NodeParent` chain to find root    | O(depth) per entity                           | Read `TopologyRoot.Root` directly                                  |
+| World-builder code under `Assets/Editor/`      | Unity strips that folder from runtime builds  | Put runtime tooling under `Assets/WorldBuilder/`                   |
+| Storing `Entity` in commands                   | `Entity` is a runtime index, not stable       | Store `StableId` and resolve at execution time                     |
+| Non-serializable command fields                | Breaks save/load and replay                   | Commands contain only primitives and `StableId` values             |
+| Each command rolling its own snapshot          | Three bad implementations instead of one good | Use `EcsSnapshot.Capture` and `EcsSnapshot.Restore`                |
+| Direct ECS structural mutation from a UI layer | Bypasses undo, save, and replay               | Go through `EditorCommandBuffer.Execute`                           |
+| Simulation systems calling the command buffer  | Couples simulation to editor                  | Raise event on `SimulationEventBus`                                |
+| Recording simulation events to the undo stack  | Simulation events are not undoable            | Pass `recordForUndo: false`                                        |
+| Per-frame `MoveNodeCommand` during a drag      | Floods the undo stack                         | Emit once on mouse-up                                              |
+| UI accessing `EntityManager` directly          | Couples UI to ECS internals                   | Query through `WorldQuery`                                         |
 
 ---
 
@@ -366,6 +381,42 @@ Do not work around these — implement them when their milestone arrives.
 - XML doc comments on all public-facing Components and Systems
 - Systems should have a single, clearly named responsibility
 - Prefer composition over inheritance — always
+
+---
+
+## Coding Standards — Architecture Principles
+
+> The goal is always the architecturally correct solution, not the fastest unblock.
+> Temporary workarounds accumulate into permanent constraints. Every brief should
+> prefer patterns that are future-friendly over patterns that merely compile today.
+
+### Specific constraints
+
+- **Never suggest "Both" for Unity Input Handling.** The project uses the Input System
+  package. All input goes through `InputAction` and `InputActionAsset`. Legacy
+  `UnityEngine.Input` calls are never acceptable, even temporarily.
+
+- **Never suggest reverting an architectural decision to unblock a compile error.**
+  If a compile error reveals an architectural problem, fix the architecture.
+  Do not downgrade, disable, or work around it.
+
+- **Never hardcode values that belong in data or configuration.** Bindings go in
+  `InputActionAsset`. Colors go in `DebugColors`. Constants go in named static fields.
+  Magic numbers anywhere in logic are always wrong.
+
+- **Never cache positions in the renderer.** `NodeTransform` is local space.
+  `WorldSpaceTransform` is the source of truth. Renderers read live data every frame.
+
+- **Never store `Entity` in commands, save data, or scenario scripts.** Use `StableId`.
+  `Entity` is a runtime index. It is not stable across frames, sessions, or reloads.
+
+- **Never implement the same utility twice.** If a pattern appears in two commands,
+  it belongs in a shared utility (`EcsSnapshot`, `RenderingUtils`, `WorldQuery`).
+  Duplication is always a signal that a utility is missing.
+
+- **Prefer the seam over the shortcut.** `SimulationEventBus`, `EditorCommandBuffer`,
+  and `WorldQuery` exist as explicit boundaries between systems. Cross those boundaries
+  only through their defined interfaces — never by reaching through them directly.
 
 ---
 

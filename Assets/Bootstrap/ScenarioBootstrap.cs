@@ -38,27 +38,32 @@ public class ScenarioBootstrap : MonoBehaviour
 
         var em = World.DefaultGameObjectInjectionWorld.EntityManager;
 
+        StableIdAllocator.EnsureSingletons(em);
+
         var topArch = em.CreateArchetype(
             typeof(Node), typeof(NodeType),
             typeof(NodeTransform), typeof(WorldSpaceTransform),
             typeof(NodeBounds), typeof(NodeAnchors),
-            typeof(TopologyRoot), typeof(TransformDirty));
+            typeof(TopologyRoot), typeof(TransformDirty),
+            typeof(StableId));
 
         var childArch = em.CreateArchetype(
             typeof(Node), typeof(NodeParent),
             typeof(NodeTransform), typeof(WorldSpaceTransform),
             typeof(NodeBounds), typeof(NodeAnchors),
-            typeof(TopologyRoot), typeof(TransformDirty));
+            typeof(TopologyRoot), typeof(TransformDirty),
+            typeof(StableId));
 
         var internalMechArch = em.CreateArchetype(
             typeof(Mechanism), typeof(MechanismType), typeof(MechanismConnections),
             typeof(NodeParent),
             typeof(NodeTransform), typeof(WorldSpaceTransform),
             typeof(NodeAnchors),
-            typeof(TopologyRoot), typeof(TransformDirty));
+            typeof(TopologyRoot), typeof(TransformDirty),
+            typeof(StableId));
 
-        var edgeArch   = em.CreateArchetype(typeof(Edge));
-        var packetArch = em.CreateArchetype(typeof(Packet), typeof(PacketDestination), typeof(PacketSlot));
+        var edgeArch   = em.CreateArchetype(typeof(Edge), typeof(StableId));
+        var packetArch = em.CreateArchetype(typeof(Packet), typeof(PacketDestination), typeof(PacketSlot), typeof(StableId));
 
         int   n      = nodeTypes.Length;
         float radius = Mathf.Max(CircleRadius, n * 1.2f);
@@ -133,6 +138,7 @@ public class ScenarioBootstrap : MonoBehaviour
             }
 
             Entity p = em.CreateEntity(packetArch);
+            StableIdAllocator.StampAndRegister(em, p);
             em.SetComponentData(p, new Packet
             {
                 CurrentEdge = loopArcs[arc].edge,
@@ -167,6 +173,8 @@ public class ScenarioBootstrap : MonoBehaviour
     {
         bool   isTopLevel = parent == Entity.Null;
         Entity node       = em.CreateEntity(isTopLevel ? topArch : childArch);
+
+        StableIdAllocator.StampAndRegister(em, node);
 
         em.SetComponentData(node, new Node { Id = id });
         em.SetComponentData(node, new NodeTransform { Position = position, Rotation = quaternion.identity });
@@ -235,6 +243,7 @@ public class ScenarioBootstrap : MonoBehaviour
                 if (childEntry.childType == ChildType.Mechanism)
                 {
                     Entity mech = em.CreateEntity(internalMechArch);
+                    StableIdAllocator.StampAndRegister(em, mech);
                     em.SetComponentData(mech, new NodeTransform { Position = childPos, Rotation = quaternion.identity });
                     em.SetComponentData(mech, new MechanismType { Kind = childEntry.mechanismKind });
                     em.SetComponentData(mech, new NodeParent { Parent = node });
@@ -398,6 +407,7 @@ public class ScenarioBootstrap : MonoBehaviour
         var fromPos = em.GetComponentData<WorldSpaceTransform>(from).Position;
         var toPos   = em.GetComponentData<WorldSpaceTransform>(to).Position;
         Entity edge = em.CreateEntity(arch);
+        StableIdAllocator.StampAndRegister(em, edge);
         em.SetComponentData(edge, new Edge
         {
             FromNode = from,

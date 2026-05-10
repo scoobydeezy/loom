@@ -151,6 +151,7 @@ MonoBehaviour:
   matNormal: {fileID: 0}
   matActive: {fileID: 0}
   matPressured: {fileID: 0}
+  showDebugBounds: 1
 --- !u!4 &55653497
 Transform:
   m_ObjectHideFlags: 0
@@ -213,6 +214,189 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &178146821
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 178146823}
+  - component: {fileID: 178146822}
+  m_Layer: 0
+  m_Name: NodeFrameVisualizer
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &178146822
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 178146821}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 0718192021222324a9bacbdcedfe0708, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::NodeFrameVisualizer
+  pegPrefab: {fileID: 1100000000000000001, guid: e5f6071819202122a9bacbdcedfe0506, type: 3}
+  barPrefab: {fileID: 2200000000000000001, guid: f607181920212223a9bacbdcedfe0607, type: 3}
+  frameEdgePrefab: {fileID: 3300000000000000001, guid: 071819202122232409aabbccddeeff10, type: 3}
+  barProtrusion: 0.15
+  pegDiameter: 0.15
+  barDiameter: 0.15
+  minFrameHeight: 0.6
+  normalColor: {r: 0.18, g: 0.18, b: 0.18, a: 1}
+  activeColor: {r: 0, g: 1, b: 1, a: 1}
+  pressuredColor: {r: 1, g: 0.5, b: 0, a: 1}
+--- !u!4 &178146823
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 178146821}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &201024886
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 201024893}
+  - component: {fileID: 201024892}
+  - component: {fileID: 201024891}
+  - component: {fileID: 201024890}
+  - component: {fileID: 201024889}
+  - component: {fileID: 201024888}
+  - component: {fileID: 201024887}
+  - component: {fileID: 201024894}
+  m_Layer: 0
+  m_Name: EditorManager
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &201024887
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 201024886}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 46171283d29a47c4890dccdfd0594a9b, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::SimulationEventBus
+--- !u!114 &201024888
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 201024886}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 03eec914be2e5224ca0c734dec8a2ae4, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::InputHandler
+  targetCamera: {fileID: 806092041}
+  clickThreshold: 0.18
+  doubleClickWindow: 0.35
+  zoomFactor: 1.1
+  dragThresholdPx: 3
+--- !u!114 &201024889
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 201024886}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b7bdffae9beba4647ac8be28a0746cd0, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::WorldQuery
+--- !u!114 &201024890
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 201024886}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 9aed0604cc1eacd4b8ba8fb3be2a6d6d, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::EditorCommandBuffer
+--- !u!114 &201024891
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 201024886}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 2a46f1c38ae611641aecf57edf3ad1d7, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::CanvasNavigator
+  targetCamera: {fileID: 806092041}
+--- !u!114 &201024892
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 201024886}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e0f17bccda9034f43bda605d10efe2fa, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::EditorState
+--- !u!4 &201024893
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 201024886}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &201024894
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 201024886}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 79775fc56978ef043aa9f15a246915db, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::InputBindings
+  actionAsset: {fileID: -944628639613478452, guid: 463651a98e5589c4fa0e593438040afd, type: 3}
 --- !u!1 &699342560
 GameObject:
   m_ObjectHideFlags: 0
@@ -229,7 +413,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!114 &699342561
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -247,7 +431,7 @@ MonoBehaviour:
   - {fileID: 11400000, guid: b2a3d4c5e6f7a8b9c0d1e2f3a4b5c6d7, type: 2}
   - {fileID: 11400000, guid: 4a145863159e8f9438b9110d44a89bdf, type: 2}
   packetCount: 100
-  packetSpeed: 2
+  packetSpeed: 1
 --- !u!4 &699342562
 Transform:
   m_ObjectHideFlags: 0
@@ -560,3 +744,5 @@ SceneRoots:
   - {fileID: 1335789116}
   - {fileID: 55653497}
   - {fileID: 145788069}
+  - {fileID: 178146823}
+  - {fileID: 201024893}
