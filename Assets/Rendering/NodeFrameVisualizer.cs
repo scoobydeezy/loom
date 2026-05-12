@@ -5,9 +5,13 @@ using System.Collections.Generic;
 
 /// <summary>
 /// Builds physical frame geometry for each composite node, derived from the world-space positions
-/// of its FrameEntry and FrameExit children. Anchor positions are derived from the entity's
-/// WorldSpaceTransform — ECS is the source of truth — and cached in AnchorPositions for the
-/// edge / packet visualizers to look up.
+/// of its FrameEntry and FrameExit children. Anchor positions are derived from each anchor entity's
+/// WorldSpaceTransform — ECS is the source of truth — and refreshed in AnchorPositions every frame
+/// for the edge / packet visualizers to look up.
+///
+/// All geometry construction and repositioning happens in Update so that nodes spawned post-startup
+/// pick up frame visuals on the next frame and dragged nodes drag their frames with them. No
+/// position data is cached — every transform comes from a live WorldSpaceTransform read.
 /// </summary>
 [DefaultExecutionOrder(50)]
 public class NodeFrameVisualizer : MonoBehaviour
@@ -34,9 +38,25 @@ public class NodeFrameVisualizer : MonoBehaviour
 
     enum FrameState { Normal, Active, Pressured }
 
+    /// <summary>
+    /// References to the spawned GameObjects for one composite frame, plus the anchor entities used
+    /// to recompute positions each frame. No position fields — every transform read is fresh.
+    /// </summary>
     class FrameData
     {
-        public Material[] EdgeMaterials;
+        public GameObject  Container;
+        public Transform[] FrameEdgeTransforms; // 0=top, 1=bottom, 2=entry wall, 3=exit wall
+        public Material[]  FrameEdgeMaterials;
+        public Transform   EntryAnchorTransform; // null if no entry
+        public Transform   ExitAnchorTransform;  // null if no exits
+        public bool        ExitIsBar;            // true ↦ exit anchor is a bar (multi-lane), false ↦ peg
+        public Entity      EntryEntity;          // Entity.Null if no entry
+        public Entity[]    ExitEntities;         // length 0 if no exits
+
+        public void Destroy()
+        {
+            if (Container != null) UnityEngine.Object.Destroy(Container);
+        }
     }
 
     /// <summary>
@@ -46,71 +66,72 @@ public class NodeFrameVisualizer : MonoBehaviour
     /// </summary>
     public readonly Dictionary<Entity, Vector3> AnchorPositions = new();
 
-    EntityManager     entityManager;
-    EntityQuery       nodeQuery;
-    EntityQuery       entryQuery;
-    EntityQuery       exitQuery;
-    EntityQuery       edgeQuery;
-    EntityQuery       waitingQuery;
-    PacketVisualizer  packetVisualizer;
+    EntityManager    entityManager;
+    EntityQuery      entryQuery;
+    EntityQuery      exitQuery;
+    EntityQuery      edgeQuery;
+    EntityQuery      waitingQuery;
+    PacketVisualizer packetVisualizer;
 
-    readonly Dictionary<Entity, FrameData> frames = new();
-    bool initialized;
+    readonly Dictionary<Entity, FrameData> frameData   = new();
+    readonly HashSet<Entity>                builtFrames = new();
+    bool queriesReady;
 
-    void Start()
+    void EnsureQueries()
     {
-        entityManager = World.DefaultGameObjectInjectionWorld.EntityManager;
-        nodeQuery     = entityManager.CreateEntityQuery(typeof(Node), typeof(WorldSpaceTransform));
+        if (queriesReady) return;
+        var world = World.DefaultGameObjectInjectionWorld;
+        if (world == null) return;
+
+        entityManager = world.EntityManager;
         entryQuery    = entityManager.CreateEntityQuery(typeof(FrameEntry), typeof(WorldSpaceTransform), typeof(NodeParent));
         exitQuery     = entityManager.CreateEntityQuery(typeof(FrameExit),  typeof(WorldSpaceTransform), typeof(NodeParent));
         edgeQuery     = entityManager.CreateEntityQuery(typeof(Edge));
         waitingQuery  = entityManager.CreateEntityQuery(typeof(Packet), typeof(WaitingAtNode));
+        queriesReady  = true;
     }
 
     void Update()
     {
-        if (!initialized)
-        {
-            if (nodeQuery.CalculateEntityCount() == 0) return;
-            BuildAllFrames();
-            initialized = true;
-        }
-        UpdateAnchorPositions();
+        EnsureQueries();
+        if (!queriesReady) return;
+
+        if (pegPrefab == null || barPrefab == null || frameEdgePrefab == null)
+            return; // Prefab slots unassigned — nothing to build.
+
+        CleanupDestroyedFrames();
+        BuildNewFrames();
+        UpdateAllFramePositions();
         UpdateFrameStates();
     }
 
     // -------------------------------------------------------------------------
-    // AnchorPositions — refreshed each frame so node movement propagates.
+    // Lifecycle — detect new parent nodes, drop entries for destroyed ones.
     // -------------------------------------------------------------------------
 
-    void UpdateAnchorPositions()
+    void CleanupDestroyedFrames()
     {
-        AnchorPositions.Clear();
-        AccumulateAnchors(entryQuery);
-        AccumulateAnchors(exitQuery);
-    }
-
-    void AccumulateAnchors(EntityQuery q)
-    {
-        var arr = q.ToEntityArray(Unity.Collections.Allocator.Temp);
-        foreach (var e in arr)
-            AnchorPositions[e] = (Vector3)entityManager.GetComponentData<WorldSpaceTransform>(e).Position;
-        arr.Dispose();
-    }
-
-    // -------------------------------------------------------------------------
-    // One-shot build: derive each composite's frame from its FrameEntry/FrameExit positions.
-    // -------------------------------------------------------------------------
-
-    void BuildAllFrames()
-    {
-        if (pegPrefab == null || barPrefab == null || frameEdgePrefab == null)
+        List<Entity> toRemove = null;
+        foreach (var entity in builtFrames)
         {
-            Debug.LogError("[NodeFrameVisualizer] Prefab slots are unassigned — cannot build frames.");
-            return;
+            if (entityManager.Exists(entity)) continue;
+            (toRemove ??= new List<Entity>()).Add(entity);
         }
+        if (toRemove == null) return;
 
-        // FrameEntry per parent (recipes always have exactly one entry entity per scope).
+        foreach (var entity in toRemove)
+        {
+            if (frameData.TryGetValue(entity, out var data)) data.Destroy();
+            frameData.Remove(entity);
+            builtFrames.Remove(entity);
+        }
+    }
+
+    void BuildNewFrames()
+    {
+        // Composite parents are recognized by having FrameEntry children. Group entries
+        // and exits by parent so each new parent gets one BuildFrameFor call with the
+        // full anchor set already known.
         var entryByParent = new Dictionary<Entity, Entity>();
         var entries = entryQuery.ToEntityArray(Unity.Collections.Allocator.Temp);
         foreach (var e in entries)
@@ -120,7 +141,6 @@ public class NodeFrameVisualizer : MonoBehaviour
         }
         entries.Dispose();
 
-        // FrameExit per parent — typically multiple (one per exit lane).
         var exitsByParent = new Dictionary<Entity, List<Entity>>();
         var exits = exitQuery.ToEntityArray(Unity.Collections.Allocator.Temp);
         foreach (var e in exits)
@@ -138,34 +158,115 @@ public class NodeFrameVisualizer : MonoBehaviour
 
         foreach (var parent in parents)
         {
+            if (builtFrames.Contains(parent)) continue;
             entryByParent.TryGetValue(parent, out var entry);
             exitsByParent.TryGetValue(parent, out var exitList);
-            BuildFrame(parent, entry, exitList);
+            BuildFrameFor(parent, entry, exitList);
+            builtFrames.Add(parent);
         }
     }
 
-    void BuildFrame(Entity parent, Entity entryEntity, List<Entity> exitEntities)
+    // -------------------------------------------------------------------------
+    // Build — instantiate GameObjects only. Positions are set by UpdateAllFramePositions.
+    // -------------------------------------------------------------------------
+
+    void BuildFrameFor(Entity parent, Entity entryEntity, List<Entity> exitEntities)
     {
         bool hasEntry = entryEntity != Entity.Null;
         bool hasExits = exitEntities != null && exitEntities.Count > 0;
         if (!hasEntry && !hasExits) return;
 
-        Vector3 entryPos = hasEntry
-            ? (Vector3)entityManager.GetComponentData<WorldSpaceTransform>(entryEntity).Position
-            : Vector3.zero;
+        var container = new GameObject($"Frame_{parent.Index}");
+        container.transform.SetParent(transform, worldPositionStays: false);
 
-        var exitPositions = new List<Vector3>(hasExits ? exitEntities.Count : 0);
-        if (hasExits)
+        var edgeTransforms = new Transform[4];
+        var edgeMaterials  = new Material[4];
+        for (int i = 0; i < 4; i++)
         {
-            foreach (var e in exitEntities)
-                exitPositions.Add((Vector3)entityManager.GetComponentData<WorldSpaceTransform>(e).Position);
+            var go = Instantiate(frameEdgePrefab, container.transform);
+            edgeTransforms[i] = go.transform;
+            edgeMaterials[i]  = go.GetComponent<MeshRenderer>().material;
         }
 
-        // Wall X coordinates from anchor positions (entries on left wall, exits on right wall).
+        Transform entryAnchorTransform = null;
+        if (hasEntry)
+        {
+            var go = Instantiate(pegPrefab, container.transform);
+            entryAnchorTransform = go.transform;
+        }
+
+        Transform exitAnchorTransform = null;
+        bool      exitIsBar           = false;
+        if (hasExits)
+        {
+            exitIsBar = exitEntities.Count > 1;
+            var prefab = exitIsBar ? barPrefab : pegPrefab;
+            var go     = Instantiate(prefab, container.transform);
+            exitAnchorTransform = go.transform;
+        }
+
+        frameData[parent] = new FrameData
+        {
+            Container            = container,
+            FrameEdgeTransforms  = edgeTransforms,
+            FrameEdgeMaterials   = edgeMaterials,
+            EntryAnchorTransform = entryAnchorTransform,
+            ExitAnchorTransform  = exitAnchorTransform,
+            ExitIsBar            = exitIsBar,
+            EntryEntity          = hasEntry ? entryEntity : Entity.Null,
+            ExitEntities         = hasExits ? exitEntities.ToArray() : System.Array.Empty<Entity>(),
+        };
+    }
+
+    // -------------------------------------------------------------------------
+    // Per-frame positioning — every frame, every frame piece is moved/scaled
+    // from live WorldSpaceTransform reads. AnchorPositions is filled here too.
+    // -------------------------------------------------------------------------
+
+    void UpdateAllFramePositions()
+    {
+        AnchorPositions.Clear();
+
+        foreach (var entity in builtFrames)
+        {
+            if (!entityManager.Exists(entity)) continue;
+            if (!frameData.TryGetValue(entity, out var data)) continue;
+
+            bool hasEntry = data.EntryEntity != Entity.Null && entityManager.Exists(data.EntryEntity);
+            bool hasExits = false;
+            // Re-read live exit positions, dropping any that vanished mid-frame.
+            var exitPositions = new List<Vector3>(data.ExitEntities.Length);
+            foreach (var ex in data.ExitEntities)
+            {
+                if (!entityManager.Exists(ex)) continue;
+                Vector3 p = (Vector3)entityManager.GetComponentData<WorldSpaceTransform>(ex).Position;
+                exitPositions.Add(p);
+                AnchorPositions[ex] = p;
+                hasExits = true;
+            }
+
+            Vector3 entryPos = Vector3.zero;
+            if (hasEntry)
+            {
+                entryPos = (Vector3)entityManager.GetComponentData<WorldSpaceTransform>(data.EntryEntity).Position;
+                AnchorPositions[data.EntryEntity] = entryPos;
+            }
+
+            if (!hasEntry && !hasExits) continue;
+
+            PositionFrame(data, hasEntry, entryPos, exitPositions);
+        }
+    }
+
+    void PositionFrame(FrameData data, bool hasEntry, Vector3 entryPos, List<Vector3> exitPositions)
+    {
+        bool hasExits = exitPositions.Count > 0;
+
+        // Wall X coordinates: entry on the left wall, exits on the right wall.
         float entryWallX = hasEntry ? entryPos.x : exitPositions[0].x;
         float exitWallX  = hasExits ? exitPositions[0].x : entryPos.x;
 
-        // Vertical extent = union of all anchor Y values.
+        // Vertical extent — union of all anchor Y values.
         float minY = hasEntry ? entryPos.y : exitPositions[0].y;
         float maxY = minY;
         if (hasEntry)
@@ -179,7 +280,7 @@ public class NodeFrameVisualizer : MonoBehaviour
             maxY = Mathf.Max(maxY, p.y);
         }
 
-        // Single-lane composites collapse vertically — give them a minimum visible height.
+        // Single-lane composites collapse vertically — pad to minFrameHeight so the frame is visible.
         if (maxY - minY < minFrameHeight)
         {
             float midY = (minY + maxY) * 0.5f;
@@ -189,29 +290,26 @@ public class NodeFrameVisualizer : MonoBehaviour
 
         float midZ = hasEntry ? entryPos.z : exitPositions[0].z;
 
-        var container = new GameObject($"Frame_{parent.Index}");
-        container.transform.SetParent(transform, worldPositionStays: false);
+        // Frame edges — 0=top, 1=bottom, 2=entry wall, 3=exit wall.
+        SetHorizontalEdge(data.FrameEdgeTransforms[0], entryWallX, exitWallX, maxY, midZ);
+        SetHorizontalEdge(data.FrameEdgeTransforms[1], entryWallX, exitWallX, minY, midZ);
+        SetVerticalEdge  (data.FrameEdgeTransforms[2], minY, maxY, entryWallX, midZ);
+        SetVerticalEdge  (data.FrameEdgeTransforms[3], minY, maxY, exitWallX,  midZ);
 
-        var mats = new Material[4];
-        mats[0] = SpawnFrameEdgeHorizontal(container.transform, entryWallX, exitWallX, maxY, midZ);
-        mats[1] = SpawnFrameEdgeHorizontal(container.transform, entryWallX, exitWallX, minY, midZ);
-        mats[2] = SpawnFrameEdgeVertical  (container.transform, minY, maxY, entryWallX, midZ);
-        mats[3] = SpawnFrameEdgeVertical  (container.transform, minY, maxY, exitWallX,  midZ);
-
-        // Entry anchor — always a peg (recipes guarantee a single entry entity per frame).
-        if (hasEntry)
+        // Entry peg — sticks out from the entry wall.
+        if (hasEntry && data.EntryAnchorTransform != null)
         {
             Vector3 pos = entryPos + new Vector3(-barProtrusion, 0, 0);
-            SpawnPegPerpendicularToVerticalWall(container.transform, pos);
+            SetPegPerpendicularToVerticalWall(data.EntryAnchorTransform, pos);
         }
 
-        // Exit anchor — peg if 1 lane, bar spanning the lanes if more.
-        if (hasExits)
+        // Exit anchor — peg for single lane, bar spanning the lanes otherwise.
+        if (hasExits && data.ExitAnchorTransform != null)
         {
-            if (exitPositions.Count == 1)
+            if (!data.ExitIsBar)
             {
                 Vector3 pos = exitPositions[0] + new Vector3(barProtrusion, 0, 0);
-                SpawnPegPerpendicularToVerticalWall(container.transform, pos);
+                SetPegPerpendicularToVerticalWall(data.ExitAnchorTransform, pos);
             }
             else
             {
@@ -221,56 +319,48 @@ public class NodeFrameVisualizer : MonoBehaviour
                     exitMinY = Mathf.Min(exitMinY, p.y);
                     exitMaxY = Mathf.Max(exitMaxY, p.y);
                 }
-                float midY      = (exitMinY + exitMaxY) * 0.5f;
+                float midY       = (exitMinY + exitMaxY) * 0.5f;
                 float spanLength = (exitMaxY - exitMinY) + 2f * barDiameter;
-                Vector3 pos     = new Vector3(exitWallX + barProtrusion, midY, midZ);
-                SpawnBarAlongVerticalWall(container.transform, pos, spanLength);
+                Vector3 pos      = new Vector3(exitWallX + barProtrusion, midY, midZ);
+                SetBarAlongVerticalWall(data.ExitAnchorTransform, pos, spanLength);
             }
         }
-
-        frames[parent] = new FrameData { EdgeMaterials = mats };
     }
 
     // -------------------------------------------------------------------------
-    // Geometry helpers
+    // Geometry transforms — set position+rotation+scale every frame.
     // -------------------------------------------------------------------------
 
-    Material SpawnFrameEdgeHorizontal(Transform parent, float minX, float maxX, float y, float z)
+    static void SetHorizontalEdge(Transform t, float minX, float maxX, float y, float z)
     {
-        var obj = Instantiate(frameEdgePrefab, parent);
-        obj.transform.position   = new Vector3((minX + maxX) * 0.5f, y, z);
-        obj.transform.rotation   = Quaternion.identity;
-        obj.transform.localScale = new Vector3(maxX - minX, FrameEdgeThickness, FrameEdgeThickness);
-        return obj.GetComponent<MeshRenderer>().material;
+        t.position   = new Vector3((minX + maxX) * 0.5f, y, z);
+        t.rotation   = Quaternion.identity;
+        t.localScale = new Vector3(maxX - minX, FrameEdgeThickness, FrameEdgeThickness);
     }
 
-    Material SpawnFrameEdgeVertical(Transform parent, float minY, float maxY, float x, float z)
+    static void SetVerticalEdge(Transform t, float minY, float maxY, float x, float z)
     {
-        var obj = Instantiate(frameEdgePrefab, parent);
-        obj.transform.position   = new Vector3(x, (minY + maxY) * 0.5f, z);
-        obj.transform.rotation   = Quaternion.Euler(0, 0, 90);
-        obj.transform.localScale = new Vector3(maxY - minY, FrameEdgeThickness, FrameEdgeThickness);
-        return obj.GetComponent<MeshRenderer>().material;
+        t.position   = new Vector3(x, (minY + maxY) * 0.5f, z);
+        t.rotation   = Quaternion.Euler(0, 0, 90);
+        t.localScale = new Vector3(maxY - minY, FrameEdgeThickness, FrameEdgeThickness);
     }
 
-    void SpawnPegPerpendicularToVerticalWall(Transform parent, Vector3 pos)
+    void SetPegPerpendicularToVerticalWall(Transform t, Vector3 pos)
     {
         // Cylinder's local long axis is Y. Rotate 90° on Z so it sticks out along world X
         // (perpendicular to the vertical entry/exit wall). Length = 2 * barProtrusion.
-        var obj = Instantiate(pegPrefab, parent);
-        obj.transform.position   = pos;
-        obj.transform.rotation   = Quaternion.Euler(0, 0, 90);
-        obj.transform.localScale = new Vector3(pegDiameter, barProtrusion, pegDiameter);
+        t.position   = pos;
+        t.rotation   = Quaternion.Euler(0, 0, 90);
+        t.localScale = new Vector3(pegDiameter, barProtrusion, pegDiameter);
     }
 
-    void SpawnBarAlongVerticalWall(Transform parent, Vector3 pos, float spanLength)
+    void SetBarAlongVerticalWall(Transform t, Vector3 pos, float spanLength)
     {
         // Capsule's local long axis is Y. Keep it that way — bar runs along the vertical wall.
         // Default capsule height is 2 units; localScale.y = spanLength / 2 produces a bar of spanLength.
-        var obj = Instantiate(barPrefab, parent);
-        obj.transform.position   = pos;
-        obj.transform.rotation   = Quaternion.identity;
-        obj.transform.localScale = new Vector3(barDiameter, spanLength * 0.5f, barDiameter);
+        t.position   = pos;
+        t.rotation   = Quaternion.identity;
+        t.localScale = new Vector3(barDiameter, spanLength * 0.5f, barDiameter);
     }
 
     // -------------------------------------------------------------------------
@@ -315,7 +405,7 @@ public class NodeFrameVisualizer : MonoBehaviour
         }
         waitingPackets.Dispose();
 
-        foreach (var kv in frames)
+        foreach (var kv in frameData)
         {
             FrameState state = states.TryGetValue(kv.Key, out var s) ? s : FrameState.Normal;
             Color c = state switch
@@ -324,7 +414,7 @@ public class NodeFrameVisualizer : MonoBehaviour
                 FrameState.Active    => activeColor,
                 _                    => normalColor,
             };
-            foreach (var mat in kv.Value.EdgeMaterials)
+            foreach (var mat in kv.Value.FrameEdgeMaterials)
                 if (mat != null)
                     RenderingUtils.ApplyColor(mat, c);
         }

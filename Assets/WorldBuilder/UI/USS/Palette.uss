@@ -1,0 +1,85 @@
+.primary-bar {
+    height: 64px;
+    flex-direction: row;
+    align-items: center;
+    padding-left: 12px;
+    padding-right: 12px;
+}
+
+.group-button {
+    height: 40px;
+    min-width: 96px;
+    margin-right: 8px;
+    background-color: rgba(255, 255, 255, 0.08);
+    color: rgba(255, 255, 255, 0.85);
+    border-width: 0;
+    border-radius: 6px;
+}
+
+.group-button:hover {
+    background-color: rgba(255, 255, 255, 0.15);
+}
+
+.group-button.active {
+    background-color: rgba(120, 170, 255, 0.25);
+    color: rgba(255, 255, 255, 1);
+}
+
+.flyout-region {
+    flex-direction: row;
+    padding-top: 8px;
+    padding-bottom: 8px;
+    padding-left: 12px;
+    padding-right: 12px;
+    background-color: rgba(15, 15, 15, 0.9);
+    border-top-width: 1px;
+    border-top-color: rgba(255, 255, 255, 0.08);
+    display: none;
+}
+
+.flyout-region.open {
+    display: flex;
+}
+
+.palette-item {
+    width: 72px;
+    height: 72px;
+    margin-right: 8px;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    background-color: rgba(255, 255, 255, 0.06);
+    border-width: 1px;
+    border-color: rgba(255, 255, 255, 0.05);
+}
+
+.palette-item:hover {
+    background-color: rgba(255, 255, 255, 0.14);
+    border-color: rgba(255, 255, 255, 0.18);
+}
+
+.palette-item.disabled {
+    opacity: 0.4;
+}
+
+.palette-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 4px;
+    background-color: rgba(120, 170, 255, 1);
+}
+
+.palette-label {
+    font-size: 10px;
+    color: rgba(255, 255, 255, 0.6);
+    margin-top: 4px;
+    -unity-text-align: middle-center;
+}
+
+.palette-ghost {
+    position: absolute;
+    border-radius: 6px;
+    opacity: 0.5;
+    border-width: 2px;
+    border-color: rgba(255, 255, 255, 0.6);
+}

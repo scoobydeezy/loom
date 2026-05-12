@@ -113,4 +113,56 @@ public class WorldQuery : MonoBehaviour
 
     /// <summary>Resolve a StableId to a runtime Entity. For internal use by commands only.</summary>
     internal Entity Resolve(StableId id) => StableIdAllocator.Resolve(EM, id);
+
+    /// <summary>
+    /// Display name for a node — from <c>NodeType.TypeName</c> when present,
+    /// otherwise the StableId rendered as a short label.
+    /// </summary>
+    public string GetDisplayName(StableId id)
+    {
+        if (id.Value == 0) return "Root";
+        var em = EM;
+        Entity e = StableIdAllocator.Resolve(em, id);
+        if (e == Entity.Null) return $"#{id.Value}";
+        if (em.HasComponent<NodeType>(e))
+        {
+            var nt = em.GetComponentData<NodeType>(e);
+            if (nt.TypeName.Length > 0) return nt.TypeName.ToString();
+        }
+        return $"#{id.Value}";
+    }
+
+    /// <summary>
+    /// All NodeTypeDefinition assets available for placement on the canvas.
+    /// Loaded from <c>Resources/NodeTypes/</c> so the set is data-driven —
+    /// no hardcoded list in the controller.
+    /// </summary>
+    public IEnumerable<NodeTypeDefinition> GetPlaceableNodeTypes()
+        => Resources.LoadAll<NodeTypeDefinition>("NodeTypes");
+
+    /// <summary>
+    /// Converts a UI Toolkit screen-space position to a world-space position on
+    /// the simulation plane. UI Toolkit uses a top-left origin; Camera.ScreenToWorldPoint
+    /// uses bottom-left, so Y is flipped before unprojecting.
+    /// </summary>
+    public Vector3 ScreenToWorld(Vector2 screenPos)
+    {
+        var cam = Camera.main;
+        if (cam == null) return Vector3.zero;
+
+        Vector3 flipped = new Vector3(screenPos.x, Screen.height - screenPos.y, 0f);
+        if (cam.orthographic)
+        {
+            flipped.z = -cam.transform.position.z;
+            var world = cam.ScreenToWorldPoint(flipped);
+            world.z   = 0f;
+            return world;
+        }
+
+        Ray   ray = cam.ScreenPointToRay(flipped);
+        float t   = -ray.origin.z / ray.direction.z;
+        var   p   = ray.origin + ray.direction * t;
+        p.z = 0f;
+        return p;
+    }
 }

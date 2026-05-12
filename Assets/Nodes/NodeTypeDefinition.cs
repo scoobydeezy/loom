@@ -38,4 +38,8 @@ public class NodeTypeDefinition : ScriptableObject
 
     [Tooltip("Per-lane height. Total frame height = laneCount * frameHeight, where laneCount is the maximum child count across groups.")]
     public float frameHeight = 1.0f;
+
+    [Header("Editor")]
+    [Tooltip("Color used for the palette icon background. Display-only — no simulation effect.")]
+    public Color paletteColor = new Color(0.3f, 0.5f, 0.8f);
 }

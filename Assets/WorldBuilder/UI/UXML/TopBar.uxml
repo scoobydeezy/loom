@@ -1,0 +1,11 @@
+<ui:UXML xmlns:ui="UnityEngine.UIElements" xmlns:uie="UnityEditor.UIElements" editor-extension-mode="False">
+    <ui:VisualElement name="top-bar-inner" class="top-bar-inner">
+        <ui:Button name="mode-toggle" class="mode-toggle" text="Play" />
+        <ui:VisualElement class="separator" />
+        <ui:VisualElement name="breadcrumb" class="breadcrumb">
+            <ui:Label name="breadcrumb-text" text="Root" />
+        </ui:VisualElement>
+        <ui:VisualElement class="spacer" />
+        <ui:VisualElement name="status-bar" class="status-bar" />
+    </ui:VisualElement>
+</ui:UXML>

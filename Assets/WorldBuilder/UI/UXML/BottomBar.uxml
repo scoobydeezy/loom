@@ -1,0 +1,12 @@
+<ui:UXML xmlns:ui="UnityEngine.UIElements" xmlns:uie="UnityEditor.UIElements" editor-extension-mode="False">
+    <ui:VisualElement name="bottom-bar-inner" class="bottom-bar-inner">
+        <ui:VisualElement name="flyout-region" class="flyout-region" />
+        <ui:VisualElement name="primary-bar" class="primary-bar">
+            <ui:Button name="group-nodes"      class="group-button" text="Nodes" />
+            <ui:Button name="group-patterns"   class="group-button" text="Patterns" />
+            <ui:Button name="group-mechanisms" class="group-button" text="Mechanisms" />
+            <ui:VisualElement class="spacer" />
+            <ui:Button name="help-button" class="help-button" text="?" />
+        </ui:VisualElement>
+    </ui:VisualElement>
+</ui:UXML>

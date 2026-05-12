@@ -1,0 +1,42 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: bf301b7f84d96524791c8201f2db8dd0, type: 3}
+  m_Name: Queue
+  m_EditorClassIdentifier: Assembly-CSharp::NodeTypeDefinition
+  typeName: Queue
+  children:
+  - childType: 1
+    definition: {fileID: 0}
+    mechanismKind: 1
+    count: 1
+    outEdgeLength: 0.1
+    outEdgeCapacity: 100
+    role: admission control
+  - childType: 0
+    definition: {fileID: 11400000, guid: a1f2e8b3c4d5e6f7a8b9c0d1e2f3a4b5, type: 2}
+    mechanismKind: 0
+    count: 1
+    outEdgeLength: 0.1
+    outEdgeCapacity: 100
+    role: buffer
+  - childType: 1
+    definition: {fileID: 0}
+    mechanismKind: 0
+    count: 1
+    outEdgeLength: 0.1
+    outEdgeCapacity: 100
+    role: priority dispatcher
+  frameWidth: 3.0
+  frameHeight: 0.8
+  edgeCapacity: 1
+  internalPathLength: 0.1
+  paletteColor: {r: 0.7, g: 0.45, b: 0.85, a: 1}

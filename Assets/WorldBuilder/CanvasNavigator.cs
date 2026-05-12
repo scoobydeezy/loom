@@ -30,6 +30,9 @@ public class CanvasNavigator : MonoBehaviour
 
     public CanvasContext Current => stack.Count > 0 ? stack[stack.Count - 1] : root;
 
+    /// <summary>Read-only view of the full context stack, root-first.</summary>
+    public IReadOnlyList<CanvasContext> Stack => stack;
+
     [SerializeField] Camera targetCamera;
 
     readonly CanvasContext      root  = new CanvasContext();

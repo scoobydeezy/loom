@@ -1,0 +1,6 @@
+<ui:UXML xmlns:ui="UnityEngine.UIElements" xmlns:uie="UnityEditor.UIElements" editor-extension-mode="False">
+    <ui:VisualElement name="palette-item" class="palette-item">
+        <ui:VisualElement name="icon" class="palette-icon" />
+        <ui:Label name="label" class="palette-label" text="Item" />
+    </ui:VisualElement>
+</ui:UXML>

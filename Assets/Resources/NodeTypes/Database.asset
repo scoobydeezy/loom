@@ -10,9 +10,9 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: bf301b7f84d96524791c8201f2db8dd0, type: 3}
-  m_Name: LoadBalancer
+  m_Name: Database
   m_EditorClassIdentifier: Assembly-CSharp::NodeTypeDefinition
-  typeName: LoadBalancer
+  typeName: Database
   children:
   - childType: 0
     definition: {fileID: 11400000, guid: b2a3d4c5e6f7a8b9c0d1e2f3a4b5c6d7, type: 2}
@@ -31,11 +31,12 @@ MonoBehaviour:
   - childType: 0
     definition: {fileID: 11400000, guid: e9ede9398a3fb6e42a0b5bed7f8a9d24, type: 2}
     mechanismKind: 0
-    count: 8
-    outEdgeLength: 0.1
+    count: 4
+    outEdgeLength: 0.2
     outEdgeCapacity: 50
-    role: backends
+    role: workers
   frameWidth: 3.0
-  frameHeight: 0.5
+  frameHeight: 0.6
   edgeCapacity: 1
-  internalPathLength: 0.1
+  internalPathLength: 8
+  paletteColor: {r: 0.3, g: 0.5, b: 0.85, a: 1}

@@ -10,18 +10,12 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: bf301b7f84d96524791c8201f2db8dd0, type: 3}
-  m_Name: Cache
+  m_Name: QueueHolding
   m_EditorClassIdentifier: Assembly-CSharp::NodeTypeDefinition
-  typeName: Cache
-  children:
-  - childType: 0
-    definition: {fileID: 11400000, guid: e9ede9398a3fb6e42a0b5bed7f8a9d24, type: 2}
-    mechanismKind: 0
-    count: 1
-    outEdgeLength: 0.2
-    outEdgeCapacity: 50
-    role: processing
-  frameWidth: 1.5
+  typeName: QueueHolding
+  children: []
+  frameWidth: 1.0
   frameHeight: 0.8
-  edgeCapacity: 1
+  edgeCapacity: 100
   internalPathLength: 0.1
+  paletteColor: {r: 0.55, g: 0.45, b: 0.7, a: 1}

@@ -18,3 +18,4 @@ MonoBehaviour:
   frameHeight: 0.8
   edgeCapacity: 1
   internalPathLength: 3
+  paletteColor: {r: 0.55, g: 0.6, b: 0.7, a: 1}

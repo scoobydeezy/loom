@@ -68,9 +68,16 @@ public class SpawnNodeCommand : IEditorCommand
     static NodeTypeDefinition ResolveDefinition(string name)
     {
         if (string.IsNullOrEmpty(name)) return null;
-        var all = Resources.LoadAll<NodeTypeDefinition>("");
-        for (int i = 0; i < all.Length; i++)
-            if (all[i].typeName == name || all[i].name == name) return all[i];
+
+        // Primary location — NodeTypes are now consolidated under Resources/NodeTypes/.
+        var fromSubfolder = Resources.LoadAll<NodeTypeDefinition>("NodeTypes");
+        for (int i = 0; i < fromSubfolder.Length; i++)
+            if (fromSubfolder[i].typeName == name || fromSubfolder[i].name == name) return fromSubfolder[i];
+
+        // Legacy fallback for assets that may live at the root of any Resources folder.
+        var fromRoot = Resources.LoadAll<NodeTypeDefinition>("");
+        for (int i = 0; i < fromRoot.Length; i++)
+            if (fromRoot[i].typeName == name || fromRoot[i].name == name) return fromRoot[i];
 
 #if UNITY_EDITOR
         var guids = UnityEditor.AssetDatabase.FindAssets("t:NodeTypeDefinition");

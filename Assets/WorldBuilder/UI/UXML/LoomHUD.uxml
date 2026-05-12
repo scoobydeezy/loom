@@ -1,0 +1,15 @@
+<ui:UXML xmlns:ui="UnityEngine.UIElements" xmlns:uie="UnityEditor.UIElements" editor-extension-mode="False">
+    <Style src="../USS/LoomHUD.uss" />
+    <Style src="../USS/TopBar.uss" />
+    <Style src="../USS/BottomBar.uss" />
+    <Style src="../USS/Palette.uss" />
+
+    <ui:Template name="TopBar"    src="TopBar.uxml" />
+    <ui:Template name="BottomBar" src="BottomBar.uxml" />
+
+    <ui:VisualElement name="root" class="root" picking-mode="Ignore">
+        <ui:Instance template="TopBar" name="top-bar" class="top-bar" />
+        <ui:VisualElement name="canvas-region" class="canvas-region" picking-mode="Ignore" />
+        <ui:Instance template="BottomBar" name="bottom-bar" class="bottom-bar" />
+    </ui:VisualElement>
+</ui:UXML>

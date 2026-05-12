@@ -20,10 +20,15 @@ public class EditorState : MonoBehaviour
 
     /// <summary>Fired after Mode changes. Use for enabling/disabling simulation, repainting UI.</summary>
     public event System.Action<LoomMode> OnModeChanged;
-    /// <summary>Fired after the selection set changes.</summary>
-    public event System.Action OnSelectionChanged;
-    /// <summary>Fired after CurrentContext changes (push or pop).</summary>
-    public event System.Action OnContextChanged;
+    /// <summary>
+    /// Fired after the selection set changes. Payload is the new selection.
+    /// Typed as <see cref="IReadOnlyCollection{T}"/> rather than IReadOnlySet&lt;T&gt;
+    /// because the latter is not in the BCL Unity 6 ships with under
+    /// apiCompatibilityLevel: .NET Framework.
+    /// </summary>
+    public event System.Action<IReadOnlyCollection<StableId>> OnSelectionChanged;
+    /// <summary>Fired after the context stack changes (push or pop). Payload is the full stack, root-first.</summary>
+    public event System.Action<IReadOnlyList<CanvasContext>> OnContextChanged;
     /// <summary>Fired when an edge-connect operation starts.</summary>
     public event System.Action OnConnectBegan;
     /// <summary>Fired when an edge-connect operation ends (committed or cancelled).</summary>
@@ -55,21 +60,21 @@ public class EditorState : MonoBehaviour
     internal void ApplySelection(HashSet<StableId> ids)
     {
         SelectedEntities = ids ?? new HashSet<StableId>();
-        OnSelectionChanged?.Invoke();
+        OnSelectionChanged?.Invoke(SelectedEntities);
     }
 
     internal void ApplyContextPush(StableId node)
     {
         CanvasNavigator.Instance.Push(node);
         CurrentContext = CanvasNavigator.Instance.Current;
-        OnContextChanged?.Invoke();
+        OnContextChanged?.Invoke(CanvasNavigator.Instance.Stack);
     }
 
     internal void ApplyContextPop()
     {
         CanvasNavigator.Instance.Pop();
         CurrentContext = CanvasNavigator.Instance.Current;
-        OnContextChanged?.Invoke();
+        OnContextChanged?.Invoke(CanvasNavigator.Instance.Stack);
     }
 
     internal void BeginConnect(StableId anchor)
