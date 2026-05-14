@@ -41,7 +41,7 @@ public class LoomBootstrap : MonoBehaviour
             typeof(StableId));
 
         var edgeArch   = em.CreateArchetype(typeof(Edge), typeof(StableId));
-        var packetArch = em.CreateArchetype(typeof(Packet), typeof(PacketDestination), typeof(PacketSlot), typeof(StableId));
+        var packetArch = em.CreateArchetype(typeof(Packet), typeof(PacketSlot), typeof(StableId));
 
         if (nodeAType == null || nodeBType == null || nodeCType == null)
         {
@@ -86,9 +86,10 @@ public class LoomBootstrap : MonoBehaviour
             {
                 CurrentEdge = eAtoB,
                 Progress    = UnityEngine.Random.Range(0f, eatoBLength),
-                Speed       = 2f
+                Speed       = 2f,
+                Color       = PacketColor.White,
+                Shape       = PacketShape.Sphere
             });
-            em.SetComponentData(p, new PacketDestination { Node = resultB.Node });
         }
     }
 

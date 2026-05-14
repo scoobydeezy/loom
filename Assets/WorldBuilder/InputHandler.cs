@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using Unity.Collections;
 using Unity.Entities;
 using Unity.Mathematics;
 using UnityEngine;
@@ -30,6 +31,12 @@ public class InputHandler : MonoBehaviour
     [Tooltip("Screen-space pixel distance the mouse must move before a press becomes a drag.")]
     [SerializeField] float dragThresholdPx = 3f;
 
+    [Tooltip("Material applied to the ghost edge during connect mode. Leave unassigned to skip the ghost visual; connection logic still works.")]
+    [SerializeField] Material ghostEdgeMaterial;
+
+    [Tooltip("Width of the ghost edge line drawn during connect mode.")]
+    [SerializeField] float ghostEdgeWidth = 0.04f;
+
     // Drag state
     Entity   dragEntity   = Entity.Null;
     StableId dragStableId;
@@ -40,6 +47,10 @@ public class InputHandler : MonoBehaviour
     float    pressStartTime;
     float    lastClickTime;
     int      connectBeganFrame = -1;
+
+    // Connect-mode ghost edge — created on BeginConnect, destroyed on EndConnect.
+    GameObject   ghostEdgeGO;
+    LineRenderer ghostEdgeLR;
 
     bool subscribed;
 
@@ -68,6 +79,14 @@ public class InputHandler : MonoBehaviour
         b.ExitContext.performed  += OnExitContext;
         b.Zoom.performed         += OnZoom;
         b.Pan.performed          += OnPan;
+        if (b.Delete != null) b.Delete.performed += OnDelete;
+
+        var state = EditorState.Instance;
+        if (state != null)
+        {
+            state.OnConnectBegan += OnConnectBegan;
+            state.OnConnectEnded += OnConnectEnded;
+        }
 
         subscribed = true;
     }
@@ -88,7 +107,17 @@ public class InputHandler : MonoBehaviour
             b.ExitContext.performed -= OnExitContext;
             b.Zoom.performed        -= OnZoom;
             b.Pan.performed         -= OnPan;
+            if (b.Delete != null) b.Delete.performed -= OnDelete;
         }
+
+        var state = EditorState.Instance;
+        if (state != null)
+        {
+            state.OnConnectBegan -= OnConnectBegan;
+            state.OnConnectEnded -= OnConnectEnded;
+        }
+
+        DestroyGhostEdge();
         subscribed = false;
     }
 
@@ -98,7 +127,13 @@ public class InputHandler : MonoBehaviour
 
     void Update()
     {
-        var b = InputBindings.Instance;
+        var b     = InputBindings.Instance;
+        var state = EditorState.Instance;
+
+        // Ghost edge follows the cursor while a connect is in progress.
+        if (state != null && state.IsConnecting && ghostEdgeLR != null)
+            UpdateGhostEdge();
+
         if (b == null || dragEntity == Entity.Null) return;
 
         // Promote a press into a drag once the mouse moves past the threshold.
@@ -128,16 +163,25 @@ public class InputHandler : MonoBehaviour
         pressStartTime       = Time.unscaledTime;
         dragMouseStartScreen = MouseScreenPosition();
 
-        Vector3  worldPoint = MouseScreenToWorld(dragMouseStartScreen);
-        StableId hit        = PickTopmost(worldPoint);
+        Vector3 worldPoint = MouseScreenToWorld(dragMouseStartScreen);
 
-        // Shift+click on a FrameExit begins an edge connect.
-        if (hit.Value != 0 && HasComponent<FrameExit>(hit) && IsShiftHeld() && !state.IsConnecting)
+        // Shift+click on a FrameExit anchor circle begins an edge connect.
+        if (IsShiftHeld() && !state.IsConnecting)
         {
-            state.BeginConnect(hit);
-            connectBeganFrame = Time.frameCount;
-            return;
+            Entity exitAnchor = PickAnchorEntity(worldPoint, exitAnchor: true);
+            if (exitAnchor != Entity.Null)
+            {
+                var em = EM;
+                if (em.HasComponent<StableId>(exitAnchor))
+                {
+                    state.BeginConnect(em.GetComponentData<StableId>(exitAnchor));
+                    connectBeganFrame = Time.frameCount;
+                    return;
+                }
+            }
         }
+
+        StableId hit = PickTopmost(worldPoint);
 
         // Once connecting, OnConfirm completes the edge — skip selection here.
         if (state.IsConnecting) return;
@@ -167,14 +211,143 @@ public class InputHandler : MonoBehaviour
         var state = EditorState.Instance;
         if (state == null || !state.IsConnecting) return;
 
-        Vector3  worldPoint = MouseScreenToWorld(MouseScreenPosition());
-        StableId hit        = PickTopmost(worldPoint);
-        if (hit.Value != 0 && HasComponent<FrameEntry>(hit))
+        Vector3 worldPoint  = MouseScreenToWorld(MouseScreenPosition());
+        Entity  entryAnchor = PickAnchorEntity(worldPoint, exitAnchor: false);
+        if (entryAnchor == Entity.Null) return;
+
+        var query = WorldQuery.Instance;
+        if (query == null || !query.IsValidConnectionTarget(state.ConnectSource, entryAnchor)) return;
+
+        var em = EM;
+        if (!em.HasComponent<StableId>(entryAnchor)) return;
+        var targetId = em.GetComponentData<StableId>(entryAnchor);
+
+        EditorCommandBuffer.Instance.Execute(
+            new ConnectEdgeCommand(state.ConnectSource.Value, targetId.Value));
+        state.EndConnect();
+    }
+
+    void OnDelete(InputAction.CallbackContext ctx)
+    {
+        var state = EditorState.Instance;
+        if (state == null || state.Mode != LoomMode.Edit) return;
+        if (state.SelectedEntities.Count == 0) return;
+
+        var buffer = EditorCommandBuffer.Instance;
+        if (buffer == null) return;
+
+        // One transaction → one undo step, regardless of how many entities are selected.
+        var ids = new List<StableId>(state.SelectedEntities);
+        buffer.BeginTransaction();
+        foreach (var id in ids)
+            buffer.Execute(new DestroyNodeCommand(id.Value));
+        buffer.EndTransaction();
+
+        state.ApplySelection(new HashSet<StableId>());
+    }
+
+    // ---------------------------------------------------------------------
+    // Connect-mode ghost edge — created when the user begins a connect, follows
+    // the cursor each frame in Update, destroyed on EndConnect.
+    // ---------------------------------------------------------------------
+
+    void OnConnectBegan()
+    {
+        DestroyGhostEdge();
+        if (ghostEdgeMaterial == null) return;
+
+        ghostEdgeGO = new GameObject("ConnectGhostEdge");
+        ghostEdgeGO.transform.SetParent(transform, worldPositionStays: false);
+        ghostEdgeLR = ghostEdgeGO.AddComponent<LineRenderer>();
+        ghostEdgeLR.positionCount = 2;
+        ghostEdgeLR.useWorldSpace = true;
+        ghostEdgeLR.startWidth    = ghostEdgeWidth;
+        ghostEdgeLR.endWidth      = ghostEdgeWidth;
+        ghostEdgeLR.material      = ghostEdgeMaterial;
+        RenderingUtils.SetLineColor(ghostEdgeLR, DebugColors.GhostEdge);
+    }
+
+    void OnConnectEnded()
+    {
+        DestroyGhostEdge();
+    }
+
+    void DestroyGhostEdge()
+    {
+        if (ghostEdgeGO != null)
         {
-            EditorCommandBuffer.Instance.Execute(
-                new ConnectEdgeCommand(state.ConnectSource.Value, hit.Value));
-            state.EndConnect();
+            Destroy(ghostEdgeGO);
+            ghostEdgeGO = null;
+            ghostEdgeLR = null;
         }
+    }
+
+    void UpdateGhostEdge()
+    {
+        var state = EditorState.Instance;
+        if (state == null) return;
+        var em = EM;
+        Entity src = StableIdAllocator.Resolve(em, state.ConnectSource);
+        if (src == Entity.Null || !em.HasComponent<WorldSpaceTransform>(src))
+        {
+            ghostEdgeLR.enabled = false;
+            return;
+        }
+
+        Vector3 from = (Vector3)em.GetComponentData<WorldSpaceTransform>(src).Position;
+        Vector3 to   = MouseScreenToWorld(MouseScreenPosition());
+        ghostEdgeLR.enabled = true;
+        ghostEdgeLR.SetPosition(0, from);
+        ghostEdgeLR.SetPosition(1, to);
+    }
+
+    /// <summary>
+    /// Pick the closest FrameEntry or FrameExit anchor whose hit zone contains the click.
+    /// Hit zone is the circle drawn by AnchorVisualizer — same radius constant drives both,
+    /// so visual and logical hit area are guaranteed to match.
+    ///
+    /// Top-level composites carry self-tags too but their children supply the visible anchors,
+    /// so the composite itself is skipped — mirroring NodeFrameVisualizer's discriminator.
+    /// </summary>
+    Entity PickAnchorEntity(Vector3 worldPoint, bool exitAnchor)
+    {
+        var em    = EM;
+        var state = EditorState.Instance;
+        if (state == null) return Entity.Null;
+
+        using var parentQuery = em.CreateEntityQuery(typeof(NodeParent));
+        using var children    = parentQuery.ToEntityArray(Allocator.Temp);
+        var hasChildren = new HashSet<Entity>();
+        for (int i = 0; i < children.Length; i++)
+            hasChildren.Add(em.GetComponentData<NodeParent>(children[i]).Parent);
+
+        using var q = exitAnchor
+            ? em.CreateEntityQuery(typeof(FrameExit),  typeof(WorldSpaceTransform))
+            : em.CreateEntityQuery(typeof(FrameEntry), typeof(WorldSpaceTransform));
+        using var anchors = q.ToEntityArray(Allocator.Temp);
+
+        Entity best   = Entity.Null;
+        float  bestSq = AnchorVisualizer.AnchorHitRadius * AnchorVisualizer.AnchorHitRadius;
+
+        for (int i = 0; i < anchors.Length; i++)
+        {
+            Entity e         = anchors[i];
+            bool   hasParent = em.HasComponent<NodeParent>(e);
+
+            if (!hasParent && hasChildren.Contains(e)) continue; // top-level composite — children carry the anchors
+            if (!AnchorVisualizer.IsAnchorInContext(em, e, state.CurrentContext.NodeId)) continue;
+
+            Vector3 pos = AnchorVisualizer.GetAnchorWorldPosition(em, e, exitAnchor);
+            float   dx  = worldPoint.x - pos.x;
+            float   dy  = worldPoint.y - pos.y;
+            float   sq  = dx * dx + dy * dy;
+            if (sq <= bestSq)
+            {
+                bestSq = sq;
+                best   = e;
+            }
+        }
+        return best;
     }
 
     void OnSelectReleased(InputAction.CallbackContext ctx)
@@ -371,13 +544,6 @@ public class InputHandler : MonoBehaviour
             }
         }
         return best;
-    }
-
-    bool HasComponent<T>(StableId id) where T : unmanaged, IComponentData
-    {
-        var em = EM;
-        var e  = StableIdAllocator.Resolve(em, id);
-        return e != Entity.Null && em.HasComponent<T>(e);
     }
 
     // ---------------------------------------------------------------------

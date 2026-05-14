@@ -63,7 +63,7 @@ public class ScenarioBootstrap : MonoBehaviour
             typeof(StableId));
 
         var edgeArch   = em.CreateArchetype(typeof(Edge), typeof(StableId));
-        var packetArch = em.CreateArchetype(typeof(Packet), typeof(PacketDestination), typeof(PacketSlot), typeof(StableId));
+        var packetArch = em.CreateArchetype(typeof(Packet), typeof(PacketSlot), typeof(StableId));
 
         int   n      = nodeTypes.Length;
         float radius = Mathf.Max(CircleRadius, n * 1.2f);
@@ -143,9 +143,10 @@ public class ScenarioBootstrap : MonoBehaviour
             {
                 CurrentEdge = loopArcs[arc].edge,
                 Progress    = globalPos - arcBase,
-                Speed       = packetSpeed
+                Speed       = packetSpeed,
+                Color       = PacketColor.White,
+                Shape       = PacketShape.Sphere
             });
-            em.SetComponentData(p, new PacketDestination { Node = results[(arc + 1) % n].Node });
         }
     }
 

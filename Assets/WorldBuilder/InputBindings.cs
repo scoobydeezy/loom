@@ -24,6 +24,7 @@ public class InputBindings : MonoBehaviour
     public InputAction Redo          { get; private set; }
     public InputAction ExitContext   { get; private set; }
     public InputAction MousePosition { get; private set; }
+    public InputAction Delete        { get; private set; }
 
     void Awake()
     {
@@ -53,6 +54,8 @@ public class InputBindings : MonoBehaviour
         Redo          = map.FindAction("Redo",          throwIfNotFound: true);
         ExitContext   = map.FindAction("ExitContext",   throwIfNotFound: true);
         MousePosition = map.FindAction("MousePosition", throwIfNotFound: true);
+        // Delete is optional — older inputaction assets without the binding still work.
+        Delete        = map.FindAction("Delete",        throwIfNotFound: false);
 
         actionAsset.Enable();
     }

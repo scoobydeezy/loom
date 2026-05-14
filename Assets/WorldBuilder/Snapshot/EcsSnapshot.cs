@@ -36,6 +36,10 @@ public class NodeSnapshot
     public MechanismKind      MechanismKind;
     public bool               HasFrameEntry;
     public bool               HasFrameExit;
+    public bool               HasPacketSource;
+    public float              PacketSourceEmitRate;
+    public PacketColor        PacketSourceColor;
+    public PacketShape        PacketSourceShape;
     public List<NodeSnapshot> Children;
     public List<EdgeSnapshot> ConnectedEdges;          // populated on the root only
 }
@@ -97,6 +101,10 @@ public static class EcsSnapshot
             MechanismKind = em.HasComponent<MechanismType>(entity) ? em.GetComponentData<MechanismType>(entity).Kind : MechanismKind.Route,
             HasFrameEntry = em.HasComponent<FrameEntry>(entity),
             HasFrameExit  = em.HasComponent<FrameExit>(entity),
+            HasPacketSource      = em.HasComponent<PacketSource>(entity),
+            PacketSourceEmitRate = em.HasComponent<PacketSource>(entity) ? em.GetComponentData<PacketSource>(entity).EmitRate : 1f,
+            PacketSourceColor    = em.HasComponent<PacketSource>(entity) ? em.GetComponentData<PacketSource>(entity).Color    : PacketColor.White,
+            PacketSourceShape    = em.HasComponent<PacketSource>(entity) ? em.GetComponentData<PacketSource>(entity).Shape    : PacketShape.Sphere,
             ParentStableId = (em.HasComponent<NodeParent>(entity) && em.HasComponent<StableId>(em.GetComponentData<NodeParent>(entity).Parent))
                 ? em.GetComponentData<StableId>(em.GetComponentData<NodeParent>(entity).Parent).Value
                 : 0,
@@ -210,6 +218,18 @@ public static class EcsSnapshot
 
         if (snap.HasFrameEntry) em.AddComponent<FrameEntry>(entity);
         if (snap.HasFrameExit)  em.AddComponent<FrameExit>(entity);
+
+        if (snap.HasPacketSource)
+        {
+            em.AddComponent<PacketSource>(entity);
+            em.SetComponentData(entity, new PacketSource
+            {
+                EmitRate    = snap.PacketSourceEmitRate,
+                Color       = snap.PacketSourceColor,
+                Shape       = snap.PacketSourceShape,
+                Accumulator = 0f,
+            });
+        }
 
         if (snap.Children != null)
             foreach (var c in snap.Children)

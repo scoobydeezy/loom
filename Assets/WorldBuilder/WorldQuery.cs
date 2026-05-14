@@ -115,6 +115,40 @@ public class WorldQuery : MonoBehaviour
     internal Entity Resolve(StableId id) => StableIdAllocator.Resolve(EM, id);
 
     /// <summary>
+    /// True if <paramref name="target"/> is a valid completion point for a connect-edge
+    /// gesture started from <paramref name="sourceAnchor"/>. Validity means: different
+    /// node from the source, has a FrameEntry tag, no direct edge already exists, and
+    /// the target sits in the current canvas context. Used by InputHandler for
+    /// connect-completion and by AnchorVisualizer for target highlighting — keeping
+    /// the rule in exactly one place.
+    /// </summary>
+    public bool IsValidConnectionTarget(StableId sourceAnchor, Entity target)
+    {
+        if (sourceAnchor.Value == 0 || target == Entity.Null) return false;
+
+        var em       = EM;
+        Entity source = StableIdAllocator.Resolve(em, sourceAnchor);
+        if (source == Entity.Null || source == target)        return false;
+        if (!em.HasComponent<FrameEntry>(target))             return false;
+
+        // Reject duplicates: a direct edge from source → target already exists.
+        using (var edgeQuery = em.CreateEntityQuery(typeof(Edge)))
+        using (var edges     = edgeQuery.ToEntityArray(Allocator.Temp))
+        {
+            for (int i = 0; i < edges.Length; i++)
+            {
+                var e = em.GetComponentData<Edge>(edges[i]);
+                if (e.FromNode == source && e.ToNode == target) return false;
+            }
+        }
+
+        var state = EditorState.Instance;
+        if (state == null) return true;
+
+        return AnchorVisualizer.IsAnchorInContext(em, target, state.CurrentContext.NodeId);
+    }
+
+    /// <summary>
     /// Display name for a node — from <c>NodeType.TypeName</c> when present,
     /// otherwise the StableId rendered as a short label.
     /// </summary>

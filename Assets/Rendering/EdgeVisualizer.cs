@@ -24,7 +24,6 @@ public class EdgeVisualizer : MonoBehaviour
     EntityManager        entityManager;
     EntityQuery          edgeQuery;
     PacketVisualizer     packetVisualizer;
-    NodeFrameVisualizer  nodeFrameVisualizer;
 
     void Start()
     {
@@ -36,8 +35,6 @@ public class EdgeVisualizer : MonoBehaviour
     {
         if (packetVisualizer == null)
             packetVisualizer = FindAnyObjectByType<PacketVisualizer>();
-        if (nodeFrameVisualizer == null)
-            nodeFrameVisualizer = FindAnyObjectByType<NodeFrameVisualizer>();
 
         var edges = edgeQuery.ToEntityArray(Unity.Collections.Allocator.Temp);
 
@@ -57,13 +54,15 @@ public class EdgeVisualizer : MonoBehaviour
             bool isInternal = RenderingUtils.IsInternalEdge(entityManager, edge);
 
             // Internal edges connect children inside a composite — draw between their centers.
-            // External edges terminate at frame anchors (FrameEntry/FrameExit entities sit on the wall).
+            // External edges terminate at the FROM-side exit wall and TO-side entry wall:
+            //   composite-child anchors are already AT the wall by construction (returns WST);
+            //   self-frame leaves sit at center — GetAnchorWorldPosition offsets to the wall.
             Vector3 fromPos = isInternal
                 ? (Vector3)entityManager.GetComponentData<WorldSpaceTransform>(edge.FromNode).Position
-                : RenderingUtils.ResolvePosition(entityManager, nodeFrameVisualizer, edge.FromNode);
+                : AnchorVisualizer.GetAnchorWorldPosition(entityManager, edge.FromNode, isExit: true);
             Vector3 toPos = isInternal
                 ? (Vector3)entityManager.GetComponentData<WorldSpaceTransform>(edge.ToNode).Position
-                : RenderingUtils.ResolvePosition(entityManager, nodeFrameVisualizer, edge.ToNode);
+                : AnchorVisualizer.GetAnchorWorldPosition(entityManager, edge.ToNode,   isExit: false);
 
             EdgeStressLevel stress = EdgeStressLevel.Free;
             if (packetVisualizer != null)

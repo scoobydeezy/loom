@@ -64,6 +64,18 @@ public static class NodeAssembler
         if (isTopLevel) em.SetComponentData(node, new NodeType { TypeName = def.typeName });
         else            em.SetComponentData(node, new NodeParent { Parent = parent });
 
+        if (def.isPacketSource)
+        {
+            em.AddComponent<PacketSource>(node);
+            em.SetComponentData(node, new PacketSource
+            {
+                EmitRate    = 1f,
+                Color       = PacketColor.White,
+                Shape       = PacketShape.Sphere,
+                Accumulator = 0f,
+            });
+        }
+
         Entity root = isTopLevel ? node : em.GetComponentData<TopologyRoot>(parent).Root;
         em.SetComponentData(node, new TopologyRoot { Root = root });
 
@@ -83,6 +95,11 @@ public static class NodeAssembler
                 EntryLocal = new float3(entryWallX, 0f, 0f),
                 ExitLocal  = new float3(exitWallX,  0f, 0f),
             });
+            if (isTopLevel)
+            {
+                AddIfMissing<FrameEntry>(em, node);
+                AddIfMissing<FrameExit>(em, node);
+            }
             return new AssembledNode { Node = node, EntryNode = node, ExitNodes = new[] { node } };
         }
 
@@ -151,7 +168,19 @@ public static class NodeAssembler
             for (int s = 0; s < src.Count; s++)
                 for (int d = 0; d < dst.Count; d++)
                     foreach (Entity exit in src[s].ExitNodes)
-                        pendingEdges.Add((exit, dst[d].EntryNode));
+                        pendingEdges.Add((exit, dst[d].Node));
+        }
+
+        // Boundary entry edge — any external edge whose ToNode is this composite
+        // forwards into the internal graph by traversing here first. Without this,
+        // a packet arriving at the composite has no outbound and stalls at the wall.
+        // The recipe-wired edges connect *between* groups; the composite entity
+        // itself is never their source, so we add the missing link explicitly.
+        if (groups[0].Count > 0)
+        {
+            Entity internalEntry = groups[0][0].Node;
+            if (internalEntry != node)
+                pendingEdges.Add((node, internalEntry));
         }
 
         var lastGroup = groups[numGroups - 1];
@@ -163,6 +192,14 @@ public static class NodeAssembler
             EntryLocal = new float3(entryWallX, 0f, 0f),
             ExitLocal  = new float3(exitWallX,  0f, 0f),
         });
+
+        // Top-level composites are themselves connect targets at the level above their containment.
+        // The inner FrameEntry/FrameExit children remain tagged for the internal graph.
+        if (isTopLevel)
+        {
+            AddIfMissing<FrameEntry>(em, node);
+            AddIfMissing<FrameExit>(em, node);
+        }
 
         return new AssembledNode
         {

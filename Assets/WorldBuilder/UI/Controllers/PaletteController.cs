@@ -12,6 +12,7 @@ using UnityEngine.UIElements;
 /// </summary>
 public class PaletteController : MonoBehaviour
 {
+    public const string GroupSources    = "Sources";
     public const string GroupNodes      = "Nodes";
     public const string GroupPatterns   = "Patterns";
     public const string GroupMechanisms = "Mechanisms";
@@ -140,9 +141,11 @@ public class PaletteController : MonoBehaviour
             if (def == null) continue;
             bool isPattern = PatternTypeNames.Contains(def.typeName) ||
                              PatternTypeNames.Contains(def.name);
+            bool isSource  = def.isPacketSource;
 
-            if (group == GroupNodes    &&  isPattern) continue;
-            if (group == GroupPatterns && !isPattern) continue;
+            if (group == GroupSources  && !isSource)  continue;
+            if (group == GroupNodes    && (isPattern || isSource)) continue;
+            if (group == GroupPatterns && (!isPattern || isSource)) continue;
 
             yield return MakeNodeItem(def);
         }

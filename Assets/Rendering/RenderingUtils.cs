@@ -46,18 +46,4 @@ public static class RenderingUtils
         var toParent   = em.GetComponentData<NodeParent>(edge.ToNode).Parent;
         return fromParent == toParent;
     }
-
-    /// <summary>
-    /// World-space position to use for the visual endpoint of an edge connecting to <paramref name="node"/>.
-    /// FrameEntry / FrameExit entities are positioned exactly on their wall, so the lookup just
-    /// returns the anchor's world position; otherwise we fall back to the node's WorldSpaceTransform.
-    /// Entry and exit are symmetric — there's no separate entry/exit method because the anchor entity
-    /// itself encodes which wall it lives on.
-    /// </summary>
-    public static Vector3 ResolvePosition(EntityManager em, NodeFrameVisualizer nfv, Entity node)
-    {
-        if (nfv != null && nfv.AnchorPositions.TryGetValue(node, out var pos))
-            return pos;
-        return (Vector3)em.GetComponentData<WorldSpaceTransform>(node).Position;
-    }
 }

@@ -3,8 +3,14 @@ using Unity.Entities;
 using System.Collections.Generic;
 
 /// <summary>
-/// Positions packet visuals along edges and sets per-packet color based on simulation state.
-/// Also computes EdgeStressMap each frame for use by EdgeVisualizer, MechanismVisualizer, and NodeBoundsVisualizer.
+/// Positions packet visuals along edges and sets per-packet material based on
+/// simulation state. Also computes EdgeStressMap each frame for use by
+/// EdgeVisualizer, MechanismVisualizer, and NodeBoundsVisualizer.
+///
+/// State coloring is a debug aid — it will be toggleable in a future milestone.
+/// Packet identity (Packet.Color, Packet.Shape) is intentionally NOT rendered here yet;
+/// those fields exist as routing-level data stubs and will be visualized in a later milestone.
+///
 /// Must execute before all other visualizers — enforced via DefaultExecutionOrder.
 /// </summary>
 [DefaultExecutionOrder(100)]
@@ -15,20 +21,19 @@ public class PacketVisualizer : MonoBehaviour
     /// <summary>Per-edge stress level computed each frame from observed packet behavior.</summary>
     public readonly Dictionary<Entity, EdgeStressLevel> EdgeStressMap = new();
 
-    readonly Dictionary<Entity, GameObject>   visuals      = new();
-    readonly Dictionary<Entity, MeshRenderer> renderers    = new();
-    readonly Dictionary<Entity, float>        lastProgress = new();
-    readonly Dictionary<Entity, Entity>       lastEdge     = new();
-
     [Header("Packet Materials")]
     public Material matTraveling;
     public Material matBlocked;
     public Material matAwaiting;
     public Material matWaiting;
 
+    readonly Dictionary<Entity, GameObject>   visuals      = new();
+    readonly Dictionary<Entity, MeshRenderer> renderers    = new();
+    readonly Dictionary<Entity, float>        lastProgress = new();
+    readonly Dictionary<Entity, Entity>       lastEdge     = new();
+
     EntityManager        entityManager;
     EntityQuery          packetQuery;
-    NodeFrameVisualizer  nodeFrameVisualizer;
 
     void Start()
     {
@@ -38,9 +43,6 @@ public class PacketVisualizer : MonoBehaviour
 
     void Update()
     {
-        if (nodeFrameVisualizer == null)
-            nodeFrameVisualizer = FindAnyObjectByType<NodeFrameVisualizer>();
-
         var packets = packetQuery.ToEntityArray(Unity.Collections.Allocator.Temp);
 
         // Clean up visuals for destroyed packets
@@ -73,15 +75,15 @@ public class PacketVisualizer : MonoBehaviour
             var packet = entityManager.GetComponentData<Packet>(entity);
             var edge   = entityManager.GetComponentData<Edge>(packet.CurrentEdge);
 
-            // Internal edges lerp between child centers; external edges lerp between frame anchors
-            // (FrameEntry/FrameExit entities sit on the wall) to stay in sync with EdgeVisualizer.
+            // Internal edges lerp between child centers; external edges lerp between the FROM
+            // node's exit wall and the TO node's entry wall — matches EdgeVisualizer endpoints.
             bool isInternal = RenderingUtils.IsInternalEdge(entityManager, edge);
             Vector3 fromPos = isInternal
                 ? (Vector3)entityManager.GetComponentData<WorldSpaceTransform>(edge.FromNode).Position
-                : RenderingUtils.ResolvePosition(entityManager, nodeFrameVisualizer, edge.FromNode);
+                : AnchorVisualizer.GetAnchorWorldPosition(entityManager, edge.FromNode, isExit: true);
             Vector3 toPos = isInternal
                 ? (Vector3)entityManager.GetComponentData<WorldSpaceTransform>(edge.ToNode).Position
-                : RenderingUtils.ResolvePosition(entityManager, nodeFrameVisualizer, edge.ToNode);
+                : AnchorVisualizer.GetAnchorWorldPosition(entityManager, edge.ToNode,   isExit: false);
 
             if (float.IsNaN(fromPos.x) || float.IsNaN(toPos.x))
             {

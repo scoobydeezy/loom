@@ -2,12 +2,13 @@ using UnityEngine;
 using UnityEngine.UIElements;
 
 /// <summary>
-/// Wires the bottom bar's group buttons (Nodes / Patterns / Mechanisms) to the
+/// Wires the bottom bar's group buttons (Sources / Nodes / Patterns / Mechanisms) to the
 /// shared <see cref="PaletteController"/>. This controller owns nothing visual
 /// itself — it just routes clicks. Flyout content is the palette's job.
 /// </summary>
 public class BottomBarController : MonoBehaviour
 {
+    Button groupSources;
     Button groupNodes;
     Button groupPatterns;
     Button groupMechanisms;
@@ -17,10 +18,12 @@ public class BottomBarController : MonoBehaviour
         var root = ResolveRoot();
         if (root == null) return;
 
+        groupSources    = root.Q<Button>("group-sources");
         groupNodes      = root.Q<Button>("group-nodes");
         groupPatterns   = root.Q<Button>("group-patterns");
         groupMechanisms = root.Q<Button>("group-mechanisms");
 
+        if (groupSources    != null) groupSources.clicked    += OnSourcesClicked;
         if (groupNodes      != null) groupNodes.clicked      += OnNodesClicked;
         if (groupPatterns   != null) groupPatterns.clicked   += OnPatternsClicked;
         if (groupMechanisms != null) groupMechanisms.clicked += OnMechanismsClicked;
@@ -28,10 +31,11 @@ public class BottomBarController : MonoBehaviour
 
     void OnDisable()
     {
+        if (groupSources    != null) groupSources.clicked    -= OnSourcesClicked;
         if (groupNodes      != null) groupNodes.clicked      -= OnNodesClicked;
         if (groupPatterns   != null) groupPatterns.clicked   -= OnPatternsClicked;
         if (groupMechanisms != null) groupMechanisms.clicked -= OnMechanismsClicked;
-        groupNodes = groupPatterns = groupMechanisms = null;
+        groupSources = groupNodes = groupPatterns = groupMechanisms = null;
     }
 
     VisualElement ResolveRoot()
@@ -42,6 +46,7 @@ public class BottomBarController : MonoBehaviour
         return doc != null ? doc.rootVisualElement : null;
     }
 
+    void OnSourcesClicked()    => Toggle(PaletteController.GroupSources,    groupSources);
     void OnNodesClicked()      => Toggle(PaletteController.GroupNodes,      groupNodes);
     void OnPatternsClicked()   => Toggle(PaletteController.GroupPatterns,   groupPatterns);
     void OnMechanismsClicked() => Toggle(PaletteController.GroupMechanisms, groupMechanisms);
@@ -50,6 +55,6 @@ public class BottomBarController : MonoBehaviour
     {
         var palette = PaletteController.Instance;
         if (palette == null) return;
-        palette.ToggleGroup(group, new[] { groupNodes, groupPatterns, groupMechanisms }, button);
+        palette.ToggleGroup(group, new[] { groupSources, groupNodes, groupPatterns, groupMechanisms }, button);
     }
 }

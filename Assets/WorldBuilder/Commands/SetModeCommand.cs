@@ -23,12 +23,18 @@ public class SetModeCommand : IEditorCommand
     {
         if (state == null) return;
 
-        // Edit → Play: stamp topology and start the sim.
-        // Play → Edit: clear packets so the next Play starts clean.
+        // Edit → Play: stamp topology and start the sim. PacketSourceSystem takes it from here —
+        // no packets are spawned here, sources emit them.
+        // Play → Edit: clear packets and reset source accumulators so the next Play starts clean.
         if (PreviousMode == LoomMode.Edit && NewMode == LoomMode.Play)
+        {
             TopologyVersion.Increment(em);
+        }
         else if (PreviousMode == LoomMode.Play && NewMode == LoomMode.Edit)
+        {
             ClearPackets(em);
+            ResetPacketSources(em);
+        }
 
         state.ApplyModeChange(NewMode);
     }
@@ -51,5 +57,17 @@ public class SetModeCommand : IEditorCommand
                 StableIdAllocator.Unregister(em, em.GetComponentData<StableId>(all[i]));
         }
         em.DestroyEntity(q);
+    }
+
+    static void ResetPacketSources(EntityManager em)
+    {
+        using var q = em.CreateEntityQuery(typeof(PacketSource));
+        using var all = q.ToEntityArray(Unity.Collections.Allocator.Temp);
+        for (int i = 0; i < all.Length; i++)
+        {
+            var ps = em.GetComponentData<PacketSource>(all[i]);
+            ps.Accumulator = 0f;
+            em.SetComponentData(all[i], ps);
+        }
     }
 }

@@ -5,9 +5,9 @@ using System.Collections.Generic;
 
 /// <summary>
 /// Builds physical frame geometry for each composite node, derived from the world-space positions
-/// of its FrameEntry and FrameExit children. Anchor positions are derived from each anchor entity's
-/// WorldSpaceTransform — ECS is the source of truth — and refreshed in AnchorPositions every frame
-/// for the edge / packet visualizers to look up.
+/// of its FrameEntry and FrameExit children. Edge and packet visualizers resolve anchor world
+/// positions directly via <see cref="AnchorVisualizer.GetAnchorWorldPosition"/> — ECS is the
+/// source of truth, no cached lookup table lives here.
 ///
 /// All geometry construction and repositioning happens in Update so that nodes spawned post-startup
 /// pick up frame visuals on the next frame and dragged nodes drag their frames with them. No
@@ -31,10 +31,10 @@ public class NodeFrameVisualizer : MonoBehaviour
     [Tooltip("Minimum vertical extent for frames whose entry and exit anchors collapse to one point (single-lane composites).")]
     public float minFrameHeight = 0.6f;
 
-    [Header("Frame State Colors")]
-    public Color normalColor    = new Color(0.18f, 0.18f, 0.18f, 1f);
-    public Color activeColor    = new Color(0f, 1f, 1f, 1f);
-    public Color pressuredColor = new Color(1f, 0.5f, 0f, 1f);
+    [Header("Frame State Materials")]
+    public Material matNormal;
+    public Material matActive;
+    public Material matPressured;
 
     enum FrameState { Normal, Active, Pressured }
 
@@ -44,14 +44,23 @@ public class NodeFrameVisualizer : MonoBehaviour
     /// </summary>
     class FrameData
     {
-        public GameObject  Container;
-        public Transform[] FrameEdgeTransforms; // 0=top, 1=bottom, 2=entry wall, 3=exit wall
-        public Material[]  FrameEdgeMaterials;
-        public Transform   EntryAnchorTransform; // null if no entry
-        public Transform   ExitAnchorTransform;  // null if no exits
-        public bool        ExitIsBar;            // true ↦ exit anchor is a bar (multi-lane), false ↦ peg
-        public Entity      EntryEntity;          // Entity.Null if no entry
-        public Entity[]    ExitEntities;         // length 0 if no exits
+        public GameObject     Container;
+        public Transform[]    FrameEdgeTransforms; // 0=top, 1=bottom, 2=entry wall, 3=exit wall
+        public MeshRenderer[] FrameEdgeRenderers;  // sharedMaterial swapped per state
+        public Transform      EntryAnchorTransform; // null if no entry
+        public Material       EntryAnchorMaterial;  // instance — connect-mode tint via ApplyColor
+        public Transform      ExitAnchorTransform;  // null if no exits
+        public Material       ExitAnchorMaterial;   // instance — connect-mode tint via ApplyColor
+        public bool           ExitIsBar;            // true ↦ exit anchor is a bar (multi-lane), false ↦ peg
+        public Entity         EntryEntity;          // Entity.Null if no entry
+        public Entity[]       ExitEntities;         // length 0 if no exits
+
+        /// <summary>
+        /// True when this frame is a single top-level leaf node that serves as both its own
+        /// entry and exit. Wall positions are derived from NodeBounds rather than anchor
+        /// positions, since the leaf entity sits at the frame's CENTER, not on a wall.
+        /// </summary>
+        public bool           IsSelfFrame;
 
         public void Destroy()
         {
@@ -59,16 +68,10 @@ public class NodeFrameVisualizer : MonoBehaviour
         }
     }
 
-    /// <summary>
-    /// World-space anchor position per FrameEntry / FrameExit entity, refreshed each frame.
-    /// External edges and packets resolve their endpoints through this table; misses fall back
-    /// to WorldSpaceTransform (see RenderingUtils.ResolvePosition).
-    /// </summary>
-    public readonly Dictionary<Entity, Vector3> AnchorPositions = new();
-
     EntityManager    entityManager;
     EntityQuery      entryQuery;
     EntityQuery      exitQuery;
+    EntityQuery      parentQuery;
     EntityQuery      edgeQuery;
     EntityQuery      waitingQuery;
     PacketVisualizer packetVisualizer;
@@ -84,8 +87,11 @@ public class NodeFrameVisualizer : MonoBehaviour
         if (world == null) return;
 
         entityManager = world.EntityManager;
-        entryQuery    = entityManager.CreateEntityQuery(typeof(FrameEntry), typeof(WorldSpaceTransform), typeof(NodeParent));
-        exitQuery     = entityManager.CreateEntityQuery(typeof(FrameExit),  typeof(WorldSpaceTransform), typeof(NodeParent));
+        // NodeParent is NOT required — top-level leaves carry FrameEntry / FrameExit on themselves
+        // and are visualized as a self-frame.
+        entryQuery    = entityManager.CreateEntityQuery(typeof(FrameEntry), typeof(WorldSpaceTransform));
+        exitQuery     = entityManager.CreateEntityQuery(typeof(FrameExit),  typeof(WorldSpaceTransform));
+        parentQuery   = entityManager.CreateEntityQuery(typeof(NodeParent));
         edgeQuery     = entityManager.CreateEntityQuery(typeof(Edge));
         waitingQuery  = entityManager.CreateEntityQuery(typeof(Packet), typeof(WaitingAtNode));
         queriesReady  = true;
@@ -103,6 +109,7 @@ public class NodeFrameVisualizer : MonoBehaviour
         BuildNewFrames();
         UpdateAllFramePositions();
         UpdateFrameStates();
+        UpdateAnchorColors();
     }
 
     // -------------------------------------------------------------------------
@@ -129,15 +136,31 @@ public class NodeFrameVisualizer : MonoBehaviour
 
     void BuildNewFrames()
     {
-        // Composite parents are recognized by having FrameEntry children. Group entries
-        // and exits by parent so each new parent gets one BuildFrameFor call with the
-        // full anchor set already known.
+        // A top-level node carries FrameEntry/FrameExit on itself. If it has children, those
+        // tags belong to the composite-frame layer (children supply the anchors). If it has
+        // no children, the entity becomes a self-frame: it is both its own entry and exit.
+        var hasChildren = new HashSet<Entity>();
+        var children    = parentQuery.ToEntityArray(Unity.Collections.Allocator.Temp);
+        foreach (var c in children)
+            hasChildren.Add(entityManager.GetComponentData<NodeParent>(c).Parent);
+        children.Dispose();
+
         var entryByParent = new Dictionary<Entity, Entity>();
         var entries = entryQuery.ToEntityArray(Unity.Collections.Allocator.Temp);
         foreach (var e in entries)
         {
-            var parent = entityManager.GetComponentData<NodeParent>(e).Parent;
-            entryByParent[parent] = e;
+            if (entityManager.HasComponent<NodeParent>(e))
+            {
+                // Composite child anchor — group under the composite parent.
+                var parent = entityManager.GetComponentData<NodeParent>(e).Parent;
+                entryByParent[parent] = e;
+            }
+            else
+            {
+                // Top-level: ignore composites (use child anchors); leaves become self-frames.
+                if (hasChildren.Contains(e)) continue;
+                entryByParent[e] = e;
+            }
         }
         entries.Dispose();
 
@@ -145,7 +168,16 @@ public class NodeFrameVisualizer : MonoBehaviour
         var exits = exitQuery.ToEntityArray(Unity.Collections.Allocator.Temp);
         foreach (var e in exits)
         {
-            var parent = entityManager.GetComponentData<NodeParent>(e).Parent;
+            Entity parent;
+            if (entityManager.HasComponent<NodeParent>(e))
+            {
+                parent = entityManager.GetComponentData<NodeParent>(e).Parent;
+            }
+            else
+            {
+                if (hasChildren.Contains(e)) continue;
+                parent = e;
+            }
             if (!exitsByParent.TryGetValue(parent, out var list))
                 exitsByParent[parent] = list = new List<Entity>();
             list.Add(e);
@@ -180,22 +212,28 @@ public class NodeFrameVisualizer : MonoBehaviour
         container.transform.SetParent(transform, worldPositionStays: false);
 
         var edgeTransforms = new Transform[4];
-        var edgeMaterials  = new Material[4];
+        var edgeRenderers  = new MeshRenderer[4];
         for (int i = 0; i < 4; i++)
         {
             var go = Instantiate(frameEdgePrefab, container.transform);
             edgeTransforms[i] = go.transform;
-            edgeMaterials[i]  = go.GetComponent<MeshRenderer>().material;
+            edgeRenderers[i]  = go.GetComponent<MeshRenderer>();
+            if (matNormal != null && edgeRenderers[i] != null)
+                edgeRenderers[i].sharedMaterial = matNormal;
         }
 
         Transform entryAnchorTransform = null;
+        Material  entryAnchorMaterial  = null;
         if (hasEntry)
         {
             var go = Instantiate(pegPrefab, container.transform);
             entryAnchorTransform = go.transform;
+            var mr = go.GetComponent<MeshRenderer>();
+            if (mr != null) entryAnchorMaterial = mr.material; // instance copy
         }
 
         Transform exitAnchorTransform = null;
+        Material  exitAnchorMaterial  = null;
         bool      exitIsBar           = false;
         if (hasExits)
         {
@@ -203,34 +241,46 @@ public class NodeFrameVisualizer : MonoBehaviour
             var prefab = exitIsBar ? barPrefab : pegPrefab;
             var go     = Instantiate(prefab, container.transform);
             exitAnchorTransform = go.transform;
+            var mr = go.GetComponent<MeshRenderer>();
+            if (mr != null) exitAnchorMaterial = mr.material; // instance copy
         }
+
+        // Self-frame: the parent is also the entry/exit. Walls derive from NodeBounds, not from anchor positions.
+        bool isSelfFrame = hasEntry && entryEntity == parent;
 
         frameData[parent] = new FrameData
         {
             Container            = container,
             FrameEdgeTransforms  = edgeTransforms,
-            FrameEdgeMaterials   = edgeMaterials,
+            FrameEdgeRenderers   = edgeRenderers,
             EntryAnchorTransform = entryAnchorTransform,
+            EntryAnchorMaterial  = entryAnchorMaterial,
             ExitAnchorTransform  = exitAnchorTransform,
+            ExitAnchorMaterial   = exitAnchorMaterial,
             ExitIsBar            = exitIsBar,
             EntryEntity          = hasEntry ? entryEntity : Entity.Null,
             ExitEntities         = hasExits ? exitEntities.ToArray() : System.Array.Empty<Entity>(),
+            IsSelfFrame          = isSelfFrame,
         };
     }
 
     // -------------------------------------------------------------------------
     // Per-frame positioning — every frame, every frame piece is moved/scaled
-    // from live WorldSpaceTransform reads. AnchorPositions is filled here too.
+    // from live WorldSpaceTransform reads.
     // -------------------------------------------------------------------------
 
     void UpdateAllFramePositions()
     {
-        AnchorPositions.Clear();
-
         foreach (var entity in builtFrames)
         {
             if (!entityManager.Exists(entity)) continue;
             if (!frameData.TryGetValue(entity, out var data)) continue;
+
+            if (data.IsSelfFrame)
+            {
+                PositionSelfFrame(entity, data);
+                continue;
+            }
 
             bool hasEntry = data.EntryEntity != Entity.Null && entityManager.Exists(data.EntryEntity);
             bool hasExits = false;
@@ -241,7 +291,6 @@ public class NodeFrameVisualizer : MonoBehaviour
                 if (!entityManager.Exists(ex)) continue;
                 Vector3 p = (Vector3)entityManager.GetComponentData<WorldSpaceTransform>(ex).Position;
                 exitPositions.Add(p);
-                AnchorPositions[ex] = p;
                 hasExits = true;
             }
 
@@ -249,13 +298,50 @@ public class NodeFrameVisualizer : MonoBehaviour
             if (hasEntry)
             {
                 entryPos = (Vector3)entityManager.GetComponentData<WorldSpaceTransform>(data.EntryEntity).Position;
-                AnchorPositions[data.EntryEntity] = entryPos;
             }
 
             if (!hasEntry && !hasExits) continue;
 
             PositionFrame(data, hasEntry, entryPos, exitPositions);
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Self-frame — a top-level leaf node is its own entry and exit. Frame walls
+    // come from NodeBounds, not from anchor positions, because the leaf sits at
+    // the frame's CENTER. The wall world positions are derived by AnchorVisualizer
+    // .GetAnchorWorldPosition (WST + NodeAnchors offset) at the per-edge call site.
+    // -------------------------------------------------------------------------
+
+    void PositionSelfFrame(Entity entity, FrameData data)
+    {
+        var center = (Vector3)entityManager.GetComponentData<WorldSpaceTransform>(entity).Position;
+        var size   = entityManager.HasComponent<NodeBounds>(entity)
+            ? (Vector2)entityManager.GetComponentData<NodeBounds>(entity).Size
+            : new Vector2(1f, 1f);
+
+        float halfW = size.x * 0.5f;
+        float halfH = Mathf.Max(size.y, minFrameHeight) * 0.5f;
+
+        float entryWallX = center.x - halfW;
+        float exitWallX  = center.x + halfW;
+        float minY       = center.y - halfH;
+        float maxY       = center.y + halfH;
+        float midZ       = center.z;
+
+        SetHorizontalEdge(data.FrameEdgeTransforms[0], entryWallX, exitWallX, maxY, midZ);
+        SetHorizontalEdge(data.FrameEdgeTransforms[1], entryWallX, exitWallX, minY, midZ);
+        SetVerticalEdge  (data.FrameEdgeTransforms[2], minY, maxY, entryWallX, midZ);
+        SetVerticalEdge  (data.FrameEdgeTransforms[3], minY, maxY, exitWallX,  midZ);
+
+        if (data.EntryAnchorTransform != null)
+            SetPegPerpendicularToVerticalWall(
+                data.EntryAnchorTransform,
+                new Vector3(entryWallX - barProtrusion, center.y, midZ));
+        if (data.ExitAnchorTransform != null)
+            SetPegPerpendicularToVerticalWall(
+                data.ExitAnchorTransform,
+                new Vector3(exitWallX + barProtrusion, center.y, midZ));
     }
 
     void PositionFrame(FrameData data, bool hasEntry, Vector3 entryPos, List<Vector3> exitPositions)
@@ -408,15 +494,16 @@ public class NodeFrameVisualizer : MonoBehaviour
         foreach (var kv in frameData)
         {
             FrameState state = states.TryGetValue(kv.Key, out var s) ? s : FrameState.Normal;
-            Color c = state switch
+            Material mat = state switch
             {
-                FrameState.Pressured => pressuredColor,
-                FrameState.Active    => activeColor,
-                _                    => normalColor,
+                FrameState.Pressured => matPressured,
+                FrameState.Active    => matActive,
+                _                    => matNormal,
             };
-            foreach (var mat in kv.Value.FrameEdgeMaterials)
-                if (mat != null)
-                    RenderingUtils.ApplyColor(mat, c);
+            if (mat == null) continue;
+            foreach (var r in kv.Value.FrameEdgeRenderers)
+                if (r != null)
+                    r.sharedMaterial = mat;
         }
     }
 
@@ -424,5 +511,33 @@ public class NodeFrameVisualizer : MonoBehaviour
     {
         if (!states.TryGetValue(parent, out var current) || newState > current)
             states[parent] = newState;
+    }
+
+    // -------------------------------------------------------------------------
+    // Connect-mode anchor coloring — green when an entry is a valid connect target,
+    // dim red when it would be rejected, default otherwise.
+    // -------------------------------------------------------------------------
+
+    void UpdateAnchorColors()
+    {
+        var state = EditorState.Instance;
+        bool connecting = state != null && state.IsConnecting;
+        var query = WorldQuery.Instance;
+
+        foreach (var kv in frameData)
+        {
+            var data = kv.Value;
+            if (data.EntryAnchorMaterial != null)
+            {
+                Color c = DebugColors.AnchorDefault;
+                if (connecting && data.EntryEntity != Entity.Null && query != null)
+                    c = query.IsValidConnectionTarget(state.ConnectSource, data.EntryEntity)
+                        ? DebugColors.AnchorHighlight
+                        : DebugColors.AnchorInvalid;
+                RenderingUtils.ApplyColor(data.EntryAnchorMaterial, c);
+            }
+            if (data.ExitAnchorMaterial != null)
+                RenderingUtils.ApplyColor(data.ExitAnchorMaterial, DebugColors.AnchorDefault);
+        }
     }
 }

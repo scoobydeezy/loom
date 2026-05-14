@@ -42,4 +42,8 @@ public class NodeTypeDefinition : ScriptableObject
     [Header("Editor")]
     [Tooltip("Color used for the palette icon background. Display-only — no simulation effect.")]
     public Color paletteColor = new Color(0.3f, 0.5f, 0.8f);
+
+    [Header("Simulation")]
+    [Tooltip("When true, instances of this node are spawned with a PacketSource component and emit packets at runtime.")]
+    public bool isPacketSource = false;
 }
