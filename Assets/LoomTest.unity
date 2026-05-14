@@ -519,6 +519,53 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::InputBindings
   actionAsset: {fileID: -944628639613478452, guid: 463651a98e5589c4fa0e593438040afd, type: 3}
+--- !u!1 &453905588
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 453905590}
+  - component: {fileID: 453905589}
+  m_Layer: 0
+  m_Name: AnchorVisualizer
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &453905589
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 453905588}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1cda40816abe974438ad945ad569a615, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::AnchorVisualizer
+  showAnchorsInEditMode: 1
+  showAnchorsInPlayMode: 0
+  anchorMaterial: {fileID: 2100000, guid: 7d1c2b0a3e9f4c248a55c7e1d9b4e3f2, type: 2}
+--- !u!4 &453905590
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 453905588}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 2.16534, y: 0, z: 0.86563}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &699342560
 GameObject:
   m_ObjectHideFlags: 0
@@ -943,4 +990,5 @@ SceneRoots:
   - {fileID: 145788069}
   - {fileID: 178146823}
   - {fileID: 201024893}
+  - {fileID: 453905590}
   - {fileID: 103785895}
